@@ -1,11 +1,11 @@
-{ generic, pkgs, lib, system }:
+{ generic, pkgs, lib, system, guestSystem }:
 let
   imagesJSON = lib.importJSON ./images.json;
   fetchImage = image: pkgs.fetchurl {
     inherit (image) hash;
     url = "https://download.fedoraproject.org/pub/fedora/linux/releases/${image.name}";
   };
-  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${system} or {});
+  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${guestSystem} or {});
   makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], selinuxEnforcing ? false, memorySize ? null, cpus ? null }: generic.makeVmTest {
     name = "vm-test-fedora_${imageID}";
     inherit system testScript sharedDirs memorySize cpus;

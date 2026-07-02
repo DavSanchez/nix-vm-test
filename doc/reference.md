@@ -103,7 +103,9 @@ $ROOT.$DISTRIBUTION {
 }
 ```
 
-Where `$ROOT` will be `nix-vm-test.lib.x86_64-linux` on a flake-based setup.
+Where `$ROOT` will be `nix-vm-test.lib.x86_64-linux` on a flake-based setup, or `nix-vm-test.lib.aarch64-darwin` when running on an Apple Silicon Mac.
+
+> **Note**: `aarch64-darwin` runs aarch64 guests (Linux on aarch64 cloud images, near-native speed via the Hypervisor.framework). `x86_64-darwin` (Intel Macs) and `aarch64-linux` are not currently supported as hosts. Running an actual VM test on `aarch64-darwin` requires a cloud-init based image preparation path (the current `virt-customize`-based path uses `pkgs.guestfs-tools`, which is Linux-only); the lib evaluates and the per-image runners are exposed, but the build of the prepared image derivation fails. See [issue 97](https://github.com/numtide/nix-vm-test/issues/97) for the follow-up.
 
 Where `$DISTRIBUTION` is a `$NAME.$VERSION` couple. Here's the currently supported name/version couples:
 

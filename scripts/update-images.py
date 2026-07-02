@@ -5,6 +5,8 @@ import re
 import requests
 import subprocess
 import json
+import base64
+import hashlib
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -13,6 +15,23 @@ def nix_hash(url):
     print(f"[+] Calculating Nix hash for {url}")
     res = subprocess.run(["nix-prefetch-url", url], stdout=subprocess.PIPE)
     return res.stdout.rstrip().decode("utf-8")
+
+
+def nix_hash_sri(url):
+    """Return the SRI-formatted sha256 hash of a URL's contents.
+
+    Fedora's metadata uses the SRI form (`sha256-<base64>`), which is
+    what `pkgs.fetchurl` expects when the caller passes the SRI hash
+    directly to `hash`.
+    """
+    print(f"[+] Calculating SRI hash for {url}")
+    res = requests.get(url, stream=True)
+    res.raise_for_status()
+    h = hashlib.sha256()
+    for chunk in res.iter_content(chunk_size=1 << 20):
+        h.update(chunk)
+    digest = base64.b64encode(h.digest()).decode("ascii")
+    return f"sha256-{digest}"
 
 def get_latest_debian_image(url):
     print(f"[+] Parsing debian index {url}")
@@ -123,6 +142,46 @@ def ubuntu_parse():
         }
     return json.dumps(res)
 
+def get_latest_fedora_image(version, arch):
+    """Find the latest Generic cloud qcow2 for a given Fedora version and arch.
+
+    Returns the relative path (relative to
+    https://download.fedoraproject.org/pub/fedora/linux/releases/) or None.
+    """
+    arch_dir = "aarch64" if arch == "aarch64-linux" else "x86_64"
+    url = f"https://download.fedoraproject.org/pub/fedora/linux/releases/{version}/Cloud/{arch_dir}/images/"
+    print(f"[+] Parsing fedora index {url}")
+    page = requests.get(url)
+    page.raise_for_status()
+    soup = BeautifulSoup(page.content, "html.parser")
+    rows = soup.find_all("a")
+    pattern = re.compile(rf"^Fedora-Cloud-Base-Generic-{re.escape(version)}-[0-9.]+\.{re.escape(arch_dir)}\.qcow2$")
+    candidates = sorted(
+        [a["href"] for a in rows if pattern.match(a.get("href", ""))],
+        reverse=True,
+    )
+    if not candidates:
+        return None
+    return f"{version}/Cloud/{arch_dir}/images/{candidates[0]}"
+
+
+def fedora_parse():
+    res = {}
+    for arch in ("x86_64-linux", "aarch64-linux"):
+        res[arch] = {}
+        for version in ("41", "42", "43"):
+            rel = get_latest_fedora_image(version, arch)
+            if rel is None:
+                print(f"[!] No Fedora {version} {arch} image found, skipping")
+                continue
+            url = f"https://download.fedoraproject.org/pub/fedora/linux/releases/{rel}"
+            res[arch][version] = {
+                "name": rel,
+                "hash": nix_hash_sri(url),
+            }
+    return json.dumps(res)
+
+
 if __name__ == '__main__':
     ubuntu_json = ubuntu_parse()
     with open("ubuntu.json", "w") as f:
@@ -130,3 +189,6 @@ if __name__ == '__main__':
     debian_json = debian_parse()
     with open("debian.json", "w") as f:
         f.write(debian_json)
+    fedora_json = fedora_parse()
+    with open("fedora.json", "w") as f:
+        f.write(fedora_json)

@@ -1,11 +1,11 @@
-{ generic, pkgs, lib, system }:
+{ generic, pkgs, lib, system, guestSystem }:
 let
   imagesJSON = lib.importJSON ./images.json;
   fetchImage = image: pkgs.fetchurl {
     sha256 = image.hash;
     url = image.name;
   };
-  images = lib.mapAttrs (k: v: fetchImage v) imagesJSON.${system};
+  images = lib.mapAttrs (k: v: fetchImage v) imagesJSON.${guestSystem};
   makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], memorySize ? null, cpus ? null }: generic.makeVmTest {
     name = "vm-test-debian_${imageID}";
     inherit system testScript sharedDirs memorySize cpus;

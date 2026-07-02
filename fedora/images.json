@@ -1,4 +1,18 @@
 {
+  "aarch64-linux": {
+    "41": {
+      "name": "41/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-41-1.4.aarch64.qcow2",
+      "hash": "sha256-CFiDtCx+O5gONmof4AbND/FYd/fm6YRCbzxsZ8fML6o="
+    },
+    "42": {
+      "name": "42/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-42-1.1.aarch64.qcow2",
+      "hash": "sha256-4QZYQZqNUCMQN9x4HDFVqpQYCox6dOXKwqawnqqTQrc="
+    },
+    "43": {
+      "name": "43/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2",
+      "hash": "sha256-ZgMa6p7GHm0NW7oSuUVOgMqU6KeckT033tTGAxFwW4s="
+    }
+  },
   "x86_64-linux": {
     "39": {
       "name": "39/Cloud/x86_64/images/Fedora-Cloud-Base-39-1.5.x86_64.qcow2",

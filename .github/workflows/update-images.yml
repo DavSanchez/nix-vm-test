@@ -16,7 +16,7 @@ jobs:
       - name: Run update-images.py
         run: |
           scripts/update-images.py
-          for distro in ubuntu debian; do
+          for distro in ubuntu debian fedora; do
             cat "$distro".json | jq -S > "$distro"/images.json
             rm "$distro".json
           done
@@ -32,6 +32,7 @@ jobs:
             git checkout -b "${branchname}"
             git add debian/images.json
             git add ubuntu/images.json
+            git add fedora/images.json
             git commit -m "Update images: $(date +%F)"
             git push origin "${branchname}"
             gh pr create -B main -H "${branchname}" \

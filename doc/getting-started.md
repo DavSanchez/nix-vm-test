@@ -6,10 +6,12 @@ In this getting started tutorial, we create a VM test in charge of installing th
 
 To follow this tutorial, you'll need:
 
-1. A **Linux** system with Nix installed on top of it. See [this page](https://zero-to-nix.com/start/install) to see how to install Nix on your system.
-2. Hardware KVM acceleration enabled on your system. Without hardware acceleration, the VM tests will likely be unbearably slow to run. This is usually done on your computer through UEFI menu settings.
+1. A **Linux** system, or an **Apple Silicon** Mac (M1 / M2 / M3 / M4), with Nix installed on top of it. See [this page](https://zero-to-nix.com/start/install) to see how to install Nix on your system.
+2. Hardware virtualization enabled on your system. Without hardware acceleration, the VM tests will likely be unbearably slow to run.
+   - **Linux**: KVM is typically enabled by default; check that `/dev/kvm` exists.
+   - **macOS (Apple Silicon)**: the Hypervisor.framework is built into the OS and is always available.
 
-You can check whether you have hardware-accelerated KVM support using the following command:
+On Linux, you can check whether you have hardware-accelerated KVM support using the following command:
 
 ```sh
 $ LC_ALL=C.UTF-8 lscpu | grep Virtualization

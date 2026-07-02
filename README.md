@@ -32,7 +32,7 @@ And run your tests using a single CLI command.
 
 This project builds on the [NixOS VM test](https://nixos.org/manual/nixos/stable/#sec-nixos-tests) infrastructure to allow you to test your software instantly on Ubuntu, Debian, Fedora, and Rocky virtual machines.
 
-It runs on any Linux machine with Nix installed.
+It runs on any Linux machine or Apple Silicon Mac with Nix installed.
 
 Your tests can either be used:
 
@@ -45,11 +45,13 @@ You configure **nix-vm-test** using Nix package manager, either in a flake or in
 
 ## Prerequisites
 
-- A Linux machine
+- A Linux machine, or an Apple Silicon Mac (M1 / M2 / M3 / M4)
 
 - Nix Package Manager
 
-- Hardware KVM acceleration. The project will run without it, but it will be too slow for practical purposes.
+- Hardware virtualization enabled in the firmware / OS settings:
+  - **Linux**: KVM (typically enabled by default in the kernel; check `/dev/kvm` exists)
+  - **macOS**: Hypervisor.framework (any modern macOS on Apple Silicon has it)
 
 -----
 
@@ -68,6 +70,15 @@ For more detailed information, see the [Reference](doc/reference.md) guide.
 The API will be backward compatible. The project is already used in some production setups in the wild.
 
 However, expect to experience some paper cuts along the way. Check out the [bug tracker](https://github.com/numtide/nix-vm-test/issues) to see the currently unfixed known bugs and their workaround.
+
+### Host platform support
+
+| Host | Status |
+| --- | --- |
+| `x86_64-linux` | Full — image prep via `virt-customize`, VM run via KVM |
+| `aarch64-darwin` (Apple Silicon) | **Partial** — `lib.<system>` and `overlays.default` evaluate; the per-image test runners are exposed. **Running an actual VM test on darwin is not yet supported**, because image preparation depends on `pkgs.guestfs-tools` (Linux-only). A cloud-init based image prep is tracked as a follow-up to [issue 97](https://github.com/numtide/nix-vm-test/issues/97). |
+| `x86_64-darwin` (Intel Mac) | Not supported |
+| `aarch64-linux` | Not supported as a host (cloud images are x86_64-only for x86_64-linux hosts and aarch64-only for aarch64-darwin hosts) |
 
 ## API Peek
 

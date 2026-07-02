@@ -1,10 +1,37 @@
-{ lib, pkgs, nixpkgs }:
+{ lib, pkgs, nixpkgs, guestSystem }:
 rec {
   defaultMachineConfigModule = { ... }: {
     nodes = {
     };
   };
   printAttrPos = { file, line, column }: "${file}:${toString line}:${toString column}";
+
+  isAarch64 = guestSystem == "aarch64-linux";
+  isX86_64  = guestSystem == "x86_64-linux";
+
+  # QEMU arguments picked at evaluation time based on the guest
+  # architecture and host platform.
+  #
+  # aarch64 cloud images require the `virt` machine plus UEFI firmware
+  # (edk2-aarch64-code.fd + edk2-arm-vars.fd). x86_64 cloud images boot
+  # with the default machine and no firmware.
+  qemuSystem = if isAarch64 then "qemu-system-aarch64" else "qemu-kvm";
+  qemuMachineArgs = lib.optional isAarch64 "-machine virt";
+  qemuFirmwareArgs = lib.optionals isAarch64 [
+    "-drive if=pflash,format=raw,readonly=on,file=${pkgs.qemu}/share/qemu/edk2-aarch64-code.fd"
+    "-drive if=pflash,format=raw,file=${pkgs.qemu}/share/qemu/edk2-arm-vars.fd"
+  ];
+
+  # Accelerator and CPU model. macOS uses the Hypervisor.framework
+  # (HVF) and requires `-cpu host`; Linux uses KVM with `-cpu max`.
+  qemuAccelArg = if pkgs.stdenv.hostPlatform.isDarwin then "-accel hvf" else "-enable-kvm";
+  qemuCpuArg   = if pkgs.stdenv.hostPlatform.isDarwin then "-cpu host"   else "-cpu max";
+
+  # System features required to actually run the VM.
+  requiredSystemFeatures =
+    [ "nixos-test" ]
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux  [ "kvm" ]
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ "apple-virt" ];
 
   # Careful since we do not have the nix store yet when this service runs,
   # so we cannot use pkgs.writeText or pkgs.writeShellScript for instance,
@@ -41,8 +68,8 @@ rec {
     #source /etc/profile
 
     # Don't use a pager when executing backdoor
-    # actions. Because we use a tty, commands like systemctl
-    # or nix-store get confused into thinking they're running
+    # actions. Because we use a tty, commands like
+    # systemctl or nix-store get confused into thinking they're running
     # interactively.
     export PAGER=
 
@@ -97,7 +124,7 @@ rec {
     '';
 
   makeVmTest =
-    { system
+    { system ? guestSystem
     , image
     , testScript
     , sharedDirs
@@ -186,33 +213,54 @@ rec {
 
           cd "$TMPDIR"
 
-          # Start QEMU.
-          # We might need to be smarter about the QEMU binary to run when we want to
-          # support architectures other than x86_64.
-          # See qemu-common.nix in nixpkgs.
-          ${lib.concatStringsSep "\\\n  " [
-            "exec ${lib.getBin qemupkg}/bin/qemu-kvm"
-            "-device virtio-rng-pci"
-            "-cpu max"
-            "-name vm"
-            "-m ${toString node.virtualisation.memorySize}"
-            "-smp ${toString node.virtualisation.cpus}"
-            "-drive file=${image},format=qcow2"
-            "-device virtio-net-pci,netdev=net0"
-            "-netdev user,id=net0"
-            "-virtfs local,security_model=passthrough,id=fsdev1,path=/nix/store,readonly=on,mount_tag=nix-store"
-            (lib.concatStringsSep "\\\n  "
-              (lib.mapAttrsToList
+          # Start QEMU. The binary, machine, firmware, accelerator, and
+          # CPU are all picked at evaluation time based on the guest
+          # architecture and host platform.
+          ${lib.concatStringsSep "\\\n  " (
+            [ "exec ${lib.getBin qemupkg}/bin/${qemuSystem}" ]
+            ++ qemuMachineArgs
+            ++ qemuFirmwareArgs
+            ++ [ qemuAccelArg qemuCpuArg ]
+            ++ [
+              "-device virtio-rng-pci"
+              "-name vm"
+              "-m ${toString node.virtualisation.memorySize}"
+              "-smp ${toString node.virtualisation.cpus}"
+              "-drive file=${image},format=qcow2"
+              "-device virtio-net-pci,netdev=net0"
+              "-netdev user,id=net0"
+              "-virtfs local,security_model=passthrough,id=fsdev1,path=/nix/store,readonly=on,mount_tag=nix-store"
+            ]
+            ++ (lib.mapAttrsToList
               (tag: share: "-virtfs local,path=\"\${abs_mnt_paths[\"${tag}\"]}\",security_model=none,mount_tag=${tag}")
-                  node.virtualisation.sharedDirectories))
-            "-snapshot"
-            (lib.optionalString (!interactive) "-nographic")
-            "$QEMU_OPTS"
-            "$@"
-          ]};
+              node.virtualisation.sharedDirectories)
+            ++ [
+              "-snapshot"
+              (lib.optionalString (!interactive) "-nographic")
+              "$QEMU_OPTS"
+              "$@"
+            ]
+          )}
         '';
 
-      test-driver = hostPkgs.python3Packages.callPackage "${nixpkgs}/nixos/lib/test-driver" { };
+      test-driver = hostPkgs.python3Packages.callPackage "${nixpkgs}/nixos/lib/test-driver" (
+        # `vhost-device-vsock` is Linux-only and not buildable on
+        # Darwin. The nix-vm-test use case (serial-port backdoor)
+        # does not actually need vsock, so we provide a stub that
+        # simply refuses to run. The Python test driver will not
+        # invoke it on aarch64-darwin.
+        lib.optionalAttrs hostPkgs.stdenv.hostPlatform.isDarwin {
+          vhost-device-vsock = hostPkgs.runCommand "vhost-device-vsock-stub" { } ''
+            mkdir -p $out/bin
+            cat > $out/bin/vhost-device-vsock <<'EOF'
+#!/bin/sh
+echo "vhost-device-vsock: not supported on Darwin (nix-vm-test uses serial-port backdoor instead)" >&2
+exit 1
+EOF
+            chmod +x $out/bin/vhost-device-vsock
+          '';
+        }
+      );
 
       # create configuration file based on test driver configuration
       # see https://github.com/NixOS/nixpkgs/blob/6ab8a6fd46fa56298ad16ec9b36cf6ab04413459/nixos/lib/test-driver/src/test_driver/driver.py#L38
@@ -246,7 +294,7 @@ rec {
         in
         {
           sandboxed = hostPkgs.stdenv.mkDerivation {
-            requiredSystemFeatures = [ "kvm" "nixos-test" ];
+            inherit requiredSystemFeatures;
             buildCommand = ''
               ${defaultTest {}}
               touch $out
