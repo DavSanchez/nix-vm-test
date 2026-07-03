@@ -6,6 +6,15 @@ rec {
   };
   printAttrPos = { file, line, column }: "${file}:${toString line}:${toString column}";
 
+  # Indent every line of a string by `spaces` (used to nest
+  # multi-line systemd unit bodies inside a YAML `content: |`
+  # block). Equivalent to `lib.strings.indentString` which isn't
+  # in the nixpkgs version pinned by this repo's flake.lock.
+  indentString = s: spaces:
+    lib.concatStringsSep "\n"
+      (map (line: spaces + line)
+           (lib.splitString "\n" s));
+
   isAarch64 = guestSystem == "aarch64-linux";
   isX86_64  = guestSystem == "x86_64-linux";
 
@@ -123,11 +132,43 @@ rec {
       WantedBy = multi-user.target
     '';
 
+  # Build a cloud-init "NoCloud" seed ISO from user-data, optional
+  # meta-data, and optional network-config. The resulting image is
+  # attached as a CD-ROM to the QEMU VM; cloud-init inside the guest
+  # auto-discovers it by its `CIDATA` label and applies the config
+  # on first boot.
+  #
+  # This is the alternative to baking the systemd units into the
+  # image at build time with `virt-customize`. See
+  # https://github.com/numtide/nix-vm-test/issues/97 for context.
+  # We keep both paths in the tree: `prepareXxxImage` (virt-customize,
+  # used on Linux hosts) is preserved unchanged, and
+  # `prepareXxxCloudInitSeed` (this approach, used on Darwin hosts)
+  # is added alongside it.
+  mkCloudInitSeed =
+    { name ? "cloud-init-seed"
+    , userData
+    , metaData ? null
+    , networkConfig ? null
+    }:
+    let
+      files =
+        [ (pkgs.writeText "${name}-user-data" userData) ]
+        ++ lib.optional (metaData      != null) (pkgs.writeText "${name}-meta-data"      metaData)
+        ++ lib.optional (networkConfig != null) (pkgs.writeText "${name}-network-config" networkConfig);
+    in
+    pkgs.runCommand "${name}.iso"
+      { nativeBuildInputs = [ pkgs.cloud-utils ]; }
+      ''
+        ${lib.getBin pkgs.cloud-utils}/bin/cloud-localds $out ${lib.escapeShellArgs files}
+      '';
+
   makeVmTest =
     { system ? guestSystem
     , image
     , testScript
     , sharedDirs
+    , cloudInitSeed ? null
     , machineConfigModule ? defaultMachineConfigModule
     , memorySize ? null
     , cpus ? null
@@ -231,6 +272,8 @@ rec {
               "-netdev user,id=net0"
               "-virtfs local,security_model=passthrough,id=fsdev1,path=/nix/store,readonly=on,mount_tag=nix-store"
             ]
+            ++ lib.optional (cloudInitSeed != null)
+              "-drive file=${cloudInitSeed},format=raw,media=cdrom,readonly=on"
             ++ (lib.mapAttrsToList
               (tag: share: "-virtfs local,path=\"\${abs_mnt_paths[\"${tag}\"]}\",security_model=none,mount_tag=${tag}")
               node.virtualisation.sharedDirectories)

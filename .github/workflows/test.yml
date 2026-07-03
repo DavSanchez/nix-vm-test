@@ -19,14 +19,14 @@ jobs:
       # run here because image preparation (virt-customize) is the
       # slowest step and is independent of the host platform.
       - name: Build the multi-user test
-        run: nix build .#checks.x86_64-linux.ubuntu-22_04-multi-user-test --no-build-output
+        run: nix build .#checks.x86_64-linux.ubuntu-22_04-multi-user-test
       - name: Build the shared-dir test
-        run: nix build .#checks.x86_64-linux.ubuntu-sharedDirTest --no-build-output
+        run: nix build .#checks.x86_64-linux.ubuntu-sharedDirTest
       - name: Build the pathsToRegister test
-        run: nix build .#checks.x86_64-linux.ubuntu-pathsToRegisterTest --no-build-output
+        run: nix build .#checks.x86_64-linux.ubuntu-pathsToRegisterTest
 
   darwin:
-    name: Evaluate (aarch64-darwin)
+    name: Test (aarch64-darwin)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,12 +34,18 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixos-unstable
       - uses: DeterminateSystems/magic-nix-cache-action@main
-      # macos-latest is Apple Silicon with HVF enabled. We only
-      # evaluate the flake on darwin today because image preparation
-      # (virt-customize / guestfs-tools) is Linux-only. Running
-      # actual VM tests on darwin is tracked as a follow-up to
-      # issue 97; see the project README.
-      - name: Evaluate the flake
-        run: nix flake check --no-build --all-systems
-      - name: Show the darwin lib
-        run: nix eval .#lib.aarch64-darwin.ubuntu --apply 'x: builtins.attrNames x' --json
+      # macos-latest is Apple Silicon with HVF enabled. The image
+      # prep on darwin uses cloud-init (no libguestfs), so a small
+      # smoke subset is enough to verify the pipeline end to end.
+      - name: Build the arch-routing test
+        run: nix build .#checks.aarch64-darwin.darwin-archRouting
+      - name: Build the darwin multi-user test
+        run: nix build .#checks.aarch64-darwin.darwin-darwinMultiUser
+      - name: Run the arch-routing test
+        run: |
+          nix build .#checks.aarch64-darwin.darwin-archRouting
+          ./result/bin/test-driver
+      - name: Run the darwin multi-user test
+        run: |
+          nix build .#checks.aarch64-darwin.darwin-darwinMultiUser
+          ./result/bin/test-driver

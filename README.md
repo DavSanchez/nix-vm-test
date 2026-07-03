@@ -76,9 +76,11 @@ However, expect to experience some paper cuts along the way. Check out the [bug 
 | Host | Status |
 | --- | --- |
 | `x86_64-linux` | Full — image prep via `virt-customize`, VM run via KVM |
-| `aarch64-darwin` (Apple Silicon) | **Partial** — `lib.<system>` and `overlays.default` evaluate; the per-image test runners are exposed. **Running an actual VM test on darwin is not yet supported**, because image preparation depends on `pkgs.guestfs-tools` (Linux-only). A cloud-init based image prep is tracked as a follow-up to [issue 97](https://github.com/numtide/nix-vm-test/issues/97). |
+| `aarch64-darwin` (Apple Silicon) | Full — image prep via cloud-init at first boot, VM run via HVF |
 | `x86_64-darwin` (Intel Mac) | Not supported |
 | `aarch64-linux` | Not supported as a host (cloud images are x86_64-only for x86_64-linux hosts and aarch64-only for aarch64-darwin hosts) |
+
+Image preparation is host-conditional: on Linux hosts the systemd units are baked into the qcow2 at build time with `virt-customize` (unchanged from before the macOS support work); on Darwin hosts the stock cloud image is shipped unmodified and cloud-init writes the units at first boot. Both paths produce a runnable VM.
 
 ## API Peek
 
