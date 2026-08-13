@@ -107,17 +107,25 @@ Where `$ROOT` will be `nix-vm-test.lib.<system>` on a flake-based setup.
 
 ### Platform support
 
-`<system>` is the **host** system running the driver. Supported hosts:
+`<system>` is the **host** system running the driver. Supported hosts, with their
+*default* guest (same architecture as the host):
 
-| Host system      | Guest system    | Acceleration | Notes                                  |
-| ---------------- | --------------- | ------------ | -------------------------------------- |
-| `x86_64-linux`   | `x86_64-linux`  | KVM          |                                        |
-| `aarch64-linux`  | `aarch64-linux` | KVM          |                                        |
-| `aarch64-darwin` | `aarch64-linux` | HVF          | Requires a Linux builder (see README). |
+| Host system      | Default guest system | Acceleration | Notes                                  |
+| ---------------- | --------------------- | ------------ | -------------------------------------- |
+| `x86_64-linux`   | `x86_64-linux`         | KVM          |                                        |
+| `aarch64-linux`  | `aarch64-linux`        | KVM          |                                        |
+| `aarch64-darwin` | `aarch64-linux`        | HVF          | Requires a Linux builder (see README). |
 
-On macOS the VMs run as `aarch64-linux` guests, so only distributions that publish
-an `aarch64` image are available there (**Fedora is x86_64-only and is therefore not
-exposed yet on `aarch64-darwin`**).
+By default the guest matches the host's own architecture, so only distributions that
+publish an image for that architecture are available (e.g. Fedora, which is
+x86_64-only, is not exposed by default on `aarch64-darwin`).
+
+A different guest architecture can be requested per test call via `guestSystem` (see
+the Inputs table below) — e.g. running an `x86_64-linux` guest from `aarch64-darwin`.
+Whenever the requested guest architecture doesn't match the host's, QEMU falls back to
+software emulation (`tcg`) instead of hardware acceleration, since neither KVM nor HVF
+can accelerate a foreign-architecture guest; this is slower but fully functional (the
+same approach tools like Lima/Colima use to run x86_64 VMs on Apple Silicon).
 
 Where `$DISTRIBUTION` is a `$NAME.$VERSION` couple. Here's the currently supported name/version couples:
 
@@ -163,6 +171,7 @@ Where:
 | sharedDirs     | This attribute set describes the host directories that will be mounted to the guest filesystem. `source` being the host directory, `target` being the path we want to mount the directory on the VM.                                                                                | See above example |
 | memorySize     | Memory available to the guest VM, in MiB. Defaults to 1024.                                                                                                                                                                                                                          | 2048              |
 | cpus           | Number of virtual CPUs available to the guest VM. Defaults to 2.                                                                                                                                                                                                                     | 4                 |
+| guestSystem    | Override the guest architecture for this test, instead of the host's own (see Platform support above). Falls back to unaccelerated QEMU (`tcg`) when it doesn't match the host.                                                                                                    | "x86_64-linux"    |
 | testScript     | A Python script used to orchestrate the integration test. This is compatible with NixOS tests. You can have a look at the [relevant NixOS manual section](https://nixos.org/manual/nixos/stable/#ssec-machine-objects) to get the reference documentation of the available methods. | See above example |
 
 #### Outputs

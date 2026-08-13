@@ -11,6 +11,7 @@ rec {
   guestIsAarch64 = guestPkgs.stdenv.hostPlatform.isAarch64;
   hostIsDarwin = hostPkgs.stdenv.hostPlatform.isDarwin;
   serialConsole = if guestIsAarch64 then "ttyAMA0" else "ttyS0";
+  sameArch = hostPkgs.stdenv.hostPlatform.parsed.cpu.name == guestPkgs.stdenv.hostPlatform.parsed.cpu.name;
 
   defaultMachineConfigModule = { ... }: {
     nodes = {
@@ -204,9 +205,11 @@ rec {
         qemupkg = (if !interactive then hostPkgs.qemu_test else hostPkgs.qemu);
 
         # On darwin we accelerate with Apple's Hypervisor.framework (HVF); on Linux
-        # with KVM. We only ever pair a host with a same-architecture Linux guest
-        # (e.g. aarch64-darwin → aarch64-linux), so hardware acceleration always applies.
-        accel = if hostIsDarwin then "hvf" else "kvm";
+        # with KVM. Neither can accelerate a foreign-arch guest (e.g. an x86_64-linux
+        # guest on an aarch64-darwin host), so fall back to QEMU's TCG software
+        # emulation in that case — slower, but functional (same approach Lima/Colima
+        # use to run x86_64 VMs on Apple Silicon).
+        accel = if !sameArch then "tcg" else if hostIsDarwin then "hvf" else "kvm";
 
         qemuBinary = "${lib.getBin qemupkg}/bin/qemu-system-${qemuArch}";
 
@@ -360,10 +363,11 @@ rec {
         in
         {
           sandboxed = hostPkgs.stdenv.mkDerivation {
-            # KVM on Linux, Apple's Hypervisor.framework on darwin.
+            # KVM on Linux, Apple's Hypervisor.framework on darwin — neither is needed
+            # (or available) for a foreign-arch guest, which runs unaccelerated (tcg).
             requiredSystemFeatures = [ "nixos-test" ]
-              ++ lib.optional hostIsDarwin "apple-virt"
-              ++ lib.optional (!hostIsDarwin) "kvm";
+              ++ lib.optional (sameArch && hostIsDarwin) "apple-virt"
+              ++ lib.optional (sameArch && !hostIsDarwin) "kvm";
             buildCommand = ''
               ${defaultTest {}}
               touch $out

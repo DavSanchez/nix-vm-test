@@ -11,7 +11,7 @@
 
       supportedSystems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = f: lib.genAttrs supportedSystems f;
-      guestSystemFor = import ./systems.nix;
+      guestSystemFor = hostSystem: import ./systems.nix { inherit hostSystem; };
 
       pkgsFor = system: import nixpkgs {
         overlays = [ self.overlays.default ];
