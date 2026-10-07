@@ -13,10 +13,15 @@ let
   # hangs. This is a guest-architecture concern, not a darwin-specific one (e.g. an
   # aarch64-linux host with a similarly-limited CPU would hit it too), so filter
   # for any aarch64 guest rather than only when the host happens to be darwin.
+  #
+  # The aarch64 9.0 image is also unusable: the XFS allocation group headers past
+  # the first one are blank in the published file, so no kernel can mount its root
+  # (it hangs at boot regardless of how the image is prepared).
   imagesForSystem = imagesJSON.${guestSystem} or { };
+  unsupportedOnAarch64 = name: lib.hasPrefix "8_" name || name == "9_0";
   supportedImages =
     if generic.guestIsAarch64
-    then lib.filterAttrs (name: _: !(lib.hasPrefix "8_" name)) imagesForSystem
+    then lib.filterAttrs (name: _: !(unsupportedOnAarch64 name)) imagesForSystem
     else imagesForSystem;
   images = lib.mapAttrs (k: v: fetchImage v) supportedImages;
 
