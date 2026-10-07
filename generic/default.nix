@@ -119,7 +119,9 @@ rec {
   # The VM has no udev: the image's partitions show up as /dev/vda<N>.
   #
   # `script`        : shell run inside the VM. The image's root is mounted at "$mnt".
-  # `rootPartition` : partition number of the root filesystem.
+  # `rootPartition` : partition number of the root filesystem. By default it is the
+  #                   largest partition, which is the root in every cloud image we
+  #                   use (its number differs between distros and architectures).
   # `diskSize`      : if set, grow the image to this size (e.g. "10G"), then the
   #                   root partition and its (ext4) filesystem to fill it.
   # `rootModules`   : kernel modules the VM needs to mount the root (e.g. "btrfs").
@@ -129,7 +131,7 @@ rec {
     , originalImage
     , script
     , diskSize ? null
-    , rootPartition ? 1
+    , rootPartition ? null
     , rootModules ? [ ]
     , nativeBuildInputs ? [ ]
     , memSize ? 1024
@@ -149,6 +151,9 @@ rec {
           guestPkgs.qemu-utils
           guestPkgs.util-linux
           guestPkgs.e2fsprogs
+          guestPkgs.xfsprogs
+          guestPkgs.btrfs-progs
+          guestPkgs.shadow # `groupadd --root`
           guestPkgs.cloud-utils # growpart
           guestPkgs.systemd # `systemctl --root` to enable/mask units offline
         ] ++ nativeBuildInputs;
@@ -163,14 +168,35 @@ rec {
         '';
       }
       ''
-        ${lib.optionalString (diskSize != null) ''
-          growpart /dev/vda ${toString rootPartition}
-          e2fsck -fy /dev/vda${toString rootPartition} || [ $? -le 1 ]
-          resize2fs /dev/vda${toString rootPartition}
+        ${if rootPartition != null then ''
+          root=/dev/vda${toString rootPartition}
+        '' else ''
+          root=
+          rootSize=0
+          for part in /dev/vda[0-9]*; do
+            size=$(blockdev --getsize64 "$part")
+            if [ "$size" -gt "$rootSize" ]; then root=$part; rootSize=$size; fi
+          done
         ''}
         mnt=/mnt
+        ${lib.optionalString (diskSize != null) ''
+          # growpart exits 1 with NOCHANGE when the partition is already as large as
+          # it can get (e.g. an image that is already that size), which is fine.
+          growpart /dev/vda "''${root#/dev/vda}" || [ $? -eq 1 ]
+          # ext4 grows offline; xfs and btrfs only grow while mounted (below).
+          if [ "$(blkid -o value -s TYPE "$root")" = ext4 ]; then
+            e2fsck -fy "$root" || [ $? -le 1 ]
+            resize2fs "$root"
+          fi
+        ''}
         mkdir -p "$mnt"
-        mount /dev/vda${toString rootPartition} "$mnt"
+        mount "$root" "$mnt"
+        ${lib.optionalString (diskSize != null) ''
+          case "$(blkid -o value -s TYPE "$root")" in
+            xfs) xfs_growfs "$mnt" ;;
+            btrfs) btrfs filesystem resize max "$mnt" ;;
+          esac
+        ''}
         ${script}
         umount "$mnt"
       '');
