@@ -26,7 +26,7 @@ let
       # The root filesystem is a btrfs subvolume named `root` (next to `home` and `var`).
       mountOptions = "subvol=root";
       rootModules = [ "btrfs" "xor" "raid6_pq" "zstd_compress" ];
-      nativeBuildInputs = [ guestPkgs.attr ];
+      nativeBuildInputs = [ guestPkgs.policycoreutils ];
       script = ''
         # Clear the root password
         sed -i 's/^root:[^:]*:/root::/' "$mnt/etc/shadow"
@@ -65,14 +65,9 @@ let
 
         systemctl --root="$mnt" enable backdoor.service
 
-        ${if selinuxEnforcing then ''
-          # Files written from here carry no SELinux labels. Label the ones the boot
-          # needs by hand rather than relabeling the whole filesystem on first boot.
-          label() { setfattr -h -n security.selinux -v "system_u:object_r:$1:s0" "''${@:2}"; }
-          label bin_t "$mnt/usr/bin/backdoorScript"
-          label shadow_t "$mnt/etc/shadow"
-          label systemd_unit_file_t "$mnt"/etc/systemd/system/{backdoor,mount-store}.service
-        '' else ''
+        # Keep this last: it labels the files written above, including the unit
+        # symlink `enable` just created.
+        ${if selinuxEnforcing then generic.selinuxRelabel ''"$mnt/usr/bin/backdoorScript" "$mnt/etc"'' else ''
           sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' "$mnt/etc/selinux/config"
         ''}
       '';

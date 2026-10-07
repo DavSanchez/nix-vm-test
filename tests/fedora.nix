@@ -18,6 +18,17 @@ in {
     diskSize = "+1G";
   }).sandboxed;
 
+  # The image must boot, and the backdoor must work, with SELinux enforcing.
+  selinuxEnforcing = (lib.fedora."43" {
+    sharedDirs = {};
+    selinuxEnforcing = true;
+    testScript = ''
+      vm.wait_for_unit("multi-user.target")
+      vm.succeed('test "$(getenforce)" = Enforcing')
+      vm.succeed('[ -z "$(systemctl --failed --no-legend)" ]')
+    '';
+  }).sandboxed;
+
   sharedDirTest = let
     dir1 = pkgs.runCommandNoCC "dir1" {} ''
       mkdir -p $out
