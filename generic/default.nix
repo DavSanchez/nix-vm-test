@@ -97,19 +97,6 @@ rec {
       WantedBy = multi-user.target
     '';
 
-    # Baked (x86_64) path only: the aarch64/cloud-init path relies on cloud-init's
-    # own default growpart/resizefs modules instead (see ubuntu/default.nix).
-    resizeService = guestPkgs.writeText "resizeService" ''
-      [Service]
-      Type = oneshot
-      ExecStart = apt-get install -yq cloud-guest-utils
-      ExecStart = growpart /dev/sda 1
-      ExecStart = resize2fs /dev/sda1
-
-      [Install]
-      WantedBy = multi-user.target
-    '';
-
   # Customize a disk image without libguestfs: boot a tiny Linux VM (nixpkgs'
   # `vmTools.runInLinuxVM`) with the image attached as a raw virtio disk, mount its
   # root filesystem and run `script` against it. Unlike `virt-customize` (whose
@@ -201,41 +188,6 @@ rec {
         umount "$mnt"
       '');
 
-  # Build a cloud-init NoCloud seed ISO. Used on darwin/aarch64 where `guestfs`
-  # (and therefore `virt-customize`) is unavailable: instead of baking the guest
-  # customization into the image ahead of time, we attach this seed at VM launch
-  # and let cloud-init apply it on boot.
-  #
-  # `files`    : attrset of `<name-on-seed> = <store path>`; copied verbatim onto
-  #              the seed so `runcmd` can install them into the guest.
-  # `userData` : the cloud-config (`#cloud-config …`) YAML string.
-  #
-  # The seed is a plain ISO9660 volume labelled CIDATA, which cloud-init's NoCloud
-  # datasource discovers automatically on any attached block device.
-  mkCloudInitSeed = { files ? { }, userData }:
-    guestPkgs.runCommand "cloud-init-seed.iso"
-      { nativeBuildInputs = [ guestPkgs.cdrkit ]; }
-      ''
-        mkdir -p seed
-        printf 'instance-id: iid-nixvmtest\nlocal-hostname: vm\n' > seed/meta-data
-        cp ${guestPkgs.writeText "user-data" userData} seed/user-data
-        ${lib.concatStrings (lib.mapAttrsToList (name: src: "cp ${src} seed/${name}\n") files)}
-        ( cd seed && genisoimage -output "$out" -volid CIDATA -joliet -rock * )
-      '';
-
-  # Assemble a `#cloud-config` user-data document. `runcmd` is a list of shell
-  # command strings run (in order, as root) on boot. Guest customization files are
-  # shipped on the seed (see `mkCloudInitSeed`'s `files`) and installed by `runcmd`,
-  # which keeps this pure (no import-from-derivation of file contents).
-  # Each command is emitted via `builtins.toJSON` (a valid YAML double-quoted
-  # scalar) rather than as a raw plain scalar, so a command containing a
-  # leading '#' or ': ' can't be misparsed as a YAML comment/mapping.
-  mkUserData = { runcmd ? [ ] }:
-    lib.concatStringsSep "\n" (
-      [ "#cloud-config" ]
-      ++ lib.optionals (runcmd != [ ]) ([ "runcmd:" ] ++ map (c: "  - ${builtins.toJSON c}") runcmd)
-    );
-
   makeVmTest =
     { image
     , testScript
@@ -244,10 +196,6 @@ rec {
     , memorySize ? null
     , cpus ? null
     , name ? "vm-test"
-    # Optional cloud-init NoCloud seed ISO (see `mkCloudInitSeed`). When set, it is
-    # attached as an extra drive so cloud-init customizes the guest on boot. Used
-    # on darwin/aarch64 in place of the baked `virt-customize` image.
-    , cloudInitSeed ? null
     }:
     let
       mountSharesScript = hostPkgs.writeScriptBin "mount-shares" {} ''
@@ -320,12 +268,6 @@ rec {
           else
             [ "-drive file=${image},format=qcow2" ];
 
-        # Attach the cloud-init NoCloud seed (read-only) when provided.
-        seedFlags = lib.optionals (cloudInitSeed != null) [
-          "-drive if=none,id=cidata,format=raw,readonly=on,file=${cloudInitSeed}"
-          "-device virtio-blk-pci,drive=cidata"
-        ];
-
         # On aarch64 UEFI, disable the NIC's option ROM via romfile=. Without this,
         # every boot prints "Image type X64 can't be loaded on AARCH64 UEFI system."
         # while EDK2 tries (and fails) to load the ROM's x86 EFI section — harmless
@@ -385,7 +327,7 @@ rec {
             "-name vm"
             "-m ${toString node.virtualisation.memorySize}"
             "-smp ${toString node.virtualisation.cpus}"
-          ] ++ firmwareFlags ++ diskFlags ++ seedFlags ++ [
+          ] ++ firmwareFlags ++ diskFlags ++ [
             netDevFlag
             "-netdev user,id=net0"
             "-virtfs local,security_model=passthrough,id=fsdev1,path=/nix/store,readonly=on,mount_tag=nix-store"

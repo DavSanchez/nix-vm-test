@@ -59,6 +59,11 @@ You configure **nix-vm-test** using Nix package manager, either in a flake or in
     image is customized in a Linux derivation that is not available from any binary
     cache and therefore must be built. VMs run as `aarch64-linux` guests.
 
+The guest image is customized offline inside a short-lived VM (nixpkgs'
+`vmTools.runInLinuxVM`), the same way on every host, so the machine that builds it
+needs the `kvm` Nix system feature. On Linux that is the default when `/dev/kvm` is
+available; without it the build falls back to (slow) emulation or is refused.
+
 -----
 
 ## How to use nix-vm-test

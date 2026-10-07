@@ -116,8 +116,10 @@ Where `$ROOT` will be `nix-vm-test.lib.<system>` on a flake-based setup.
 | `aarch64-darwin` | `aarch64-linux` | HVF          | Requires a Linux builder (see README). |
 
 On macOS the VMs run as `aarch64-linux` guests, so only distributions that publish
-an `aarch64` image are available there (**Fedora is x86_64-only and is therefore not
-exposed yet on `aarch64-darwin`**).
+an `aarch64` image are available there. **Fedora and Arch Linux are x86_64-only and
+are therefore not exposed on `aarch64-darwin`**, and the Rocky 8.x and 9.0 aarch64
+images are skipped (8.x needs 64 KB pages, which Apple Silicon lacks; the 9.0 image is
+damaged).
 
 Where `$DISTRIBUTION` is a `$NAME.$VERSION` couple. Here's the currently supported name/version couples:
 
