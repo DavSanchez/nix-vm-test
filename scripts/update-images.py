@@ -14,6 +14,15 @@ def nix_hash(url):
     res = subprocess.run(["nix-prefetch-url", url], stdout=subprocess.PIPE)
     return res.stdout.rstrip().decode("utf-8")
 
+def nix_hash_sri(url):
+    # `fetchurl { hash = ...; }` wants an SRI hash, unlike `sha256 = ...`, which
+    # takes the base32 digest that nix-prefetch-url prints.
+    res = subprocess.run(
+        ["nix", "hash", "convert", "--hash-algo", "sha256", "--to", "sri", nix_hash(url)],
+        stdout=subprocess.PIPE, check=True,
+    )
+    return res.stdout.rstrip().decode("utf-8")
+
 def get_latest_debian_image(url):
     print(f"[+] Parsing debian index {url}")
     # Step 1: retrieve the latest entry
@@ -157,7 +166,7 @@ def archlinux_parse():
             date_part: {
                 "url": url,
                 "name": f"Arch-Linux-x86_64-basic-{latest[1:]}.qcow2",
-                "hash": nix_hash(url),
+                "hash": nix_hash_sri(url),
             }
         }
     })
