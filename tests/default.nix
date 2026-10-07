@@ -10,6 +10,7 @@ let
     debian = ./debian.nix;
     fedora = ./fedora.nix;
     rocky = ./rocky.nix;
+    archlinux = ./archlinux.nix;
   };
 
   # Only build a distro's tests when it actually has images for this system.

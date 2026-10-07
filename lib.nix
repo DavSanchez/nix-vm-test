@@ -22,11 +22,12 @@ let
   debian = hostPkgs.callPackage ./debian { inherit generic guestPkgs guestSystem; };
   fedora = hostPkgs.callPackage ./fedora { inherit generic guestPkgs guestSystem; };
   rocky = hostPkgs.callPackage ./rocky { inherit generic guestPkgs guestSystem; };
+  archlinux = hostPkgs.callPackage ./archlinux { inherit generic guestPkgs guestSystem; };
   # Function that can be used when defining inline modules to get better location
   # reporting in module-system errors.
   # Usage example:
   #   { _file = "${printAttrPos (builtins.unsafeGetAttrPos "a" { a = null; })}: inline module"; }
   nixos = "${nixpkgs}/nixos";
 in {
-  inherit ubuntu debian fedora rocky;
+  inherit ubuntu debian fedora rocky archlinux;
 }
