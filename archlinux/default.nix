@@ -1,23 +1,24 @@
-{ generic, pkgs, lib, system }:
+{ generic, guestPkgs, lib, guestSystem }:
 let
   imagesJSON = lib.importJSON ./images.json;
-  fetchImage = image: pkgs.fetchurl {
+  fetchImage = image: guestPkgs.fetchurl {
     inherit (image) hash;
     url = image.url;
   };
-  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${system} or {});
-  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ] }: generic.makeVmTest {
+  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${guestSystem} or {});
+  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], memorySize ? null, cpus ? null }: generic.makeVmTest {
     name = "vm-test-archlinux_${imageID}";
-    inherit system testScript sharedDirs;
+    inherit testScript sharedDirs memorySize cpus;
     image = prepareArchlinuxImage {
       inherit diskSize extraPathsToRegister;
-      hostPkgs = pkgs;
+      # Image preparation is Linux work, so it always runs with `guestPkgs`.
+      buildPkgs = guestPkgs;
       originalImage = image;
     };
   };
 
   # Arch basic image: GPT with BIOS boot + EFI + btrfs root on partition 3.
-  resizeService = pkgs.writeText "resizeService" ''
+  resizeService = guestPkgs.writeText "resizeService" ''
     [Service]
     Type = oneshot
     ExecStart = /bin/sh -euc 'sfdisk --relocate=gpt-bak-std /dev/sda; echo ",+" | sfdisk --no-reread --force -N 3 /dev/sda; partx -u /dev/sda; btrfs filesystem resize max /'
@@ -26,9 +27,9 @@ let
     WantedBy = multi-user.target
   '';
 
-  prepareArchlinuxImage = { hostPkgs, originalImage, diskSize, extraPathsToRegister }:
+  prepareArchlinuxImage = { buildPkgs, originalImage, diskSize, extraPathsToRegister }:
     let
-      pkgs = hostPkgs;
+      pkgs = buildPkgs;
       resultImg = "./image.qcow2";
     in
     pkgs.runCommand "${originalImage.name}-nix-vm-test.qcow2" { } ''
