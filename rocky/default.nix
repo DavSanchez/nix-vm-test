@@ -49,11 +49,11 @@ let
     [ -f /etc/dnf/vars/contentdir ] && sed -i 's@pub/rocky@vault/rocky@g' /etc/dnf/vars/contentdir
   '';
 
-  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], memorySize ? null, cpus ? null }: generic.makeVmTest {
+  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], selinuxEnforcing ? true, memorySize ? null, cpus ? null }: generic.makeVmTest {
     name = "vm-test-rocky_${imageID}";
     inherit testScript sharedDirs memorySize cpus;
     image = prepareRockyImage {
-      inherit diskSize extraPathsToRegister;
+      inherit diskSize extraPathsToRegister selinuxEnforcing;
       originalImage = image;
     };
   };
@@ -62,12 +62,13 @@ let
   # the same on x86_64 and aarch64. RHEL clones disable the 9p filesystem in their
   # kernels, so there is no mounted nix store: the backdoor script is a standalone
   # /bin/bash script copied into /usr/bin.
-  prepareRockyImage = { originalImage, diskSize, extraPathsToRegister ? [ ] }:
+  prepareRockyImage = { originalImage, diskSize, extraPathsToRegister ? [ ], selinuxEnforcing ? true }:
     generic.customizeImageInVM {
       name = "${originalImage.name}-nix-vm-test.qcow2";
       inherit originalImage diskSize;
       # The root filesystem is XFS.
       rootModules = [ "xfs" ];
+      nativeBuildInputs = [ guestPkgs.policycoreutils ];
       script = ''
         # Clear the root password
         sed -i 's/^root:[^:]*:/root::/' "$mnt/etc/shadow"
@@ -101,17 +102,18 @@ let
         # (a clean PATH: the one inherited from this VM only has nix store paths)
         chroot "$mnt" /usr/bin/env -i PATH=/usr/bin:/usr/sbin /bin/bash -c ${lib.escapeShellArg rockyFixReposScriptText}
 
-        # Files written from here carry no SELinux labels, which an enforcing policy
-        # would deny the backdoor service. Booting permissive is enough for a test VM
-        # (and avoids a full relabel + reboot on first boot).
-        sed -i 's/^SELINUX=.*/SELINUX=permissive/' "$mnt/etc/selinux/config"
-
         # Everything is configured offline, and without a datasource cloud-init would
         # spend minutes probing unreachable metadata endpoints at boot.
         mkdir -p "$mnt/etc/cloud"
         touch "$mnt/etc/cloud/cloud-init.disabled"
 
         systemctl --root="$mnt" enable backdoor.service
+
+        # Keep this last: it labels the files written above, including the unit
+        # symlink `enable` just created.
+        ${if selinuxEnforcing then generic.selinuxRelabel ''"$mnt/usr/bin/backdoorScript" "$mnt/etc"'' else ''
+          sed -i 's/^SELINUX=.*/SELINUX=permissive/' "$mnt/etc/selinux/config"
+        ''}
       '';
     };
 in {
