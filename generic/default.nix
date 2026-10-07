@@ -111,6 +111,8 @@ rec {
   #                   use (its number differs between distros and architectures).
   # `diskSize`      : if set, grow the image to this size (e.g. "10G"), then the
   #                   root partition and its (ext4) filesystem to fill it.
+  # `mountOptions`  : options for mounting the root (e.g. "subvol=root" when the
+  #                   root filesystem is a btrfs subvolume, as on Fedora).
   # `rootModules`   : kernel modules the VM needs to mount the root (e.g. "btrfs").
   # `nativeBuildInputs` : extra tools available to `script`.
   customizeImageInVM =
@@ -119,6 +121,7 @@ rec {
     , script
     , diskSize ? null
     , rootPartition ? null
+    , mountOptions ? null
     , rootModules ? [ ]
     , nativeBuildInputs ? [ ]
     , memSize ? 1024
@@ -177,7 +180,7 @@ rec {
           fi
         ''}
         mkdir -p "$mnt"
-        mount "$root" "$mnt"
+        mount ${lib.optionalString (mountOptions != null) "-o ${mountOptions}"} "$root" "$mnt"
         ${lib.optionalString (diskSize != null) ''
           case "$(blkid -o value -s TYPE "$root")" in
             xfs) xfs_growfs "$mnt" ;;

@@ -18,11 +18,13 @@ let
   };
 
   # The image is customized offline in a throwaway VM (no libguestfs), so this is
-  # the same on every architecture. The root filesystem is btrfs.
+  # the same on every architecture.
   prepareFedoraImage = { originalImage, diskSize, extraPathsToRegister ? [ ], selinuxEnforcing ? false }:
     generic.customizeImageInVM {
       name = "${originalImage.name}-nix-vm-test.qcow2";
       inherit originalImage diskSize;
+      # The root filesystem is a btrfs subvolume named `root` (next to `home` and `var`).
+      mountOptions = "subvol=root";
       rootModules = [ "btrfs" "xor" "raid6_pq" "zstd_compress" ];
       nativeBuildInputs = [ guestPkgs.attr ];
       script = ''
