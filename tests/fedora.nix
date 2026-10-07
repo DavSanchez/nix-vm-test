@@ -12,15 +12,10 @@ let
     (n: v: pkgs.lib.nameValuePair "${n}-multi-user-test" (test lib.fedora.${n}))
     lib.fedora.images;
 in {
-  resizeImage = (lib.fedora."39" {
+  resizeImage = (lib.fedora."43" {
     sharedDirs = {};
-    testScript = ''
-      vm.wait_for_unit("multi-user.target")
-      # Verify the disk-resize service actually grew the disk (rather than
-      # failing silently against the wrong block device).
-      vm.succeed('systemctl show -p Result resizeguest.service | grep -q "Result=success"')
-    '';
-    diskSize = "+2M";
+    testScript = import ./resize-check.nix { minDiskMiB = 5632; };
+    diskSize = "+1G";
   }).sandboxed;
 
   sharedDirTest = let
@@ -32,7 +27,7 @@ in {
       mkdir -p $out
       echo "hello2" > $out/somefile2
     '';
-  in (lib.fedora."39" {
+  in (lib.fedora."43" {
     sharedDirs = {
       dir1 = {
         source = dir1;

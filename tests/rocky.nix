@@ -14,13 +14,8 @@ let
 in {
   resizeImage = (lib.rocky."10_1" {
     sharedDirs = {};
-    testScript = ''
-      vm.wait_for_unit("multi-user.target")
-      # Verify the disk resize didn't leave a failed unit behind (baked path:
-      # our own resizeguest.service; cloud-init path: its built-in growpart).
-      vm.succeed('[ -z "$(systemctl --failed --no-legend)" ]')
-    '';
-    diskSize = "+2M";
+    testScript = import ./resize-check.nix { minDiskMiB = 10752; };
+    diskSize = "+1G";
   }).sandboxed;
 } //
 runTestOnEveryImage multiUserTest //
