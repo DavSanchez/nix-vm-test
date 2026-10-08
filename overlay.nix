@@ -18,11 +18,11 @@ let
     inherit guestPkgs hostSystem guestSystem;
     nixpkgs = prev.path;
   };
-  ubuntu = prev.callPackage ./ubuntu { inherit generic guestPkgs guestSystem; };
-  debian = prev.callPackage ./debian { inherit generic guestPkgs guestSystem; };
-  fedora = prev.callPackage ./fedora { inherit generic guestPkgs guestSystem; };
-  rocky = prev.callPackage ./rocky { inherit generic guestPkgs guestSystem; };
-  archlinux = prev.callPackage ./archlinux { inherit generic guestPkgs guestSystem; };
+  ubuntu = prev.callPackage ./ubuntu { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  debian = prev.callPackage ./debian { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  fedora = prev.callPackage ./fedora { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  rocky = prev.callPackage ./rocky { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  archlinux = prev.callPackage ./archlinux { inherit generic; pkgs = guestPkgs; system = guestSystem; };
 in
 
 {

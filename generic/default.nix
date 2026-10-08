@@ -202,7 +202,8 @@ rec {
   '';
 
   makeVmTest =
-    { image
+    { system
+    , image
     , testScript
     , sharedDirs
     , machineConfigModule ? defaultMachineConfigModule

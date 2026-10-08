@@ -1,7 +1,7 @@
-{ generic, guestPkgs, lib, guestSystem }:
+{ generic, pkgs, lib, system }:
 let
   imagesJSON = lib.importJSON ./images.json;
-  fetchImage = image: guestPkgs.fetchurl {
+  fetchImage = image: pkgs.fetchurl {
     inherit (image) sha256;
     url = image.url;
   };
@@ -17,22 +17,41 @@ let
   # The aarch64 9.0 image is also unusable: the XFS allocation group headers past
   # the first one are blank in the published file, so no kernel can mount its root
   # (it hangs at boot regardless of how the image is prepared).
-  imagesForSystem = imagesJSON.${guestSystem} or { };
+  imagesForSystem = imagesJSON.${system} or {};
   unsupportedOnAarch64 = name: lib.hasPrefix "8_" name || name == "9_0";
   supportedImages =
     if generic.guestIsAarch64
     then lib.filterAttrs (name: _: !(unsupportedOnAarch64 name)) imagesForSystem
     else imagesForSystem;
   images = lib.mapAttrs (k: v: fetchImage v) supportedImages;
+  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], selinuxEnforcing ? true, memorySize ? null, cpus ? null }: generic.makeVmTest {
+    name = "vm-test-rocky_${imageID}";
+    inherit system testScript sharedDirs memorySize cpus;
+    image = prepareRockyImage {
+      inherit diskSize extraPathsToRegister selinuxEnforcing;
+      hostPkgs = pkgs;
+      originalImage = image;
+    };
+  };
 
-  # Lock repositories to the vault mirror for the image's own minor version, so
-  # dnf operations against first-party repos keep working even after that point
-  # release is superseded — every image in rocky/images.json already points at
-  # `vault/rocky`, so this isn't hypothetical, it's the state of every image we
-  # ship. Safe to apply to every repo file since a fresh RESF image ships no
-  # non-first-party repos. Kept as plain text (rather than a derivation) because
-  # it runs inside a chroot of the image, where no nix store paths are visible.
+  resizeService = pkgs.writeText "resizeService" ''
+    [Service]
+    Type = oneshot
+    ExecStart = growpart /dev/sda 1
+    ExecStart = xfs_growfs /
+
+    [Install]
+    WantedBy = multi-user.target
+  '';
+
+  # Kept as plain text (rather than inline in the script below) because it runs
+  # inside a chroot of the image, where no nix store paths are visible.
   rockyFixReposScriptText = ''
+    # lock repositories to the minor version in vault so that
+    # the dnf operations **always** work for first-party repos
+
+    # safe to do on all repos because you won't find any
+    # non-first-party repos on a fresh image from RESF
     rockyRepoFiles=( $(find /etc/yum.repos.d -type f 2>/dev/null) )
     for repoFile in "''${rockyRepoFiles[@]}"; do
       sed -i 's@.*mirrorlist=@#mirrorlist=@g' "''${repoFile}" # disable mirrorlist
@@ -42,6 +61,9 @@ let
       sed -i 's@$contentdir@vault/rocky@g' "''${repoFile}"
       sed -i 's@pub/rocky@vault/rocky@g' "''${repoFile}"
 
+      # change `$contentdir` globally
+      sed -i 's@$contentdir@vault/rocky@g' "''${repoFile}"
+
       # all this to not pollute the current environment with $VERSION_ID
       (export $(cat /etc/os-release | grep '^VERSION_ID=' | sed -e 's/"//g') && sed -i "s@\$releasever@''${VERSION_ID}@g" "''${repoFile}")
     done
@@ -49,66 +71,64 @@ let
     [ -f /etc/dnf/vars/contentdir ] && sed -i 's@pub/rocky@vault/rocky@g' /etc/dnf/vars/contentdir
   '';
 
-  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], selinuxEnforcing ? true, memorySize ? null, cpus ? null }: generic.makeVmTest {
-    name = "vm-test-rocky_${imageID}";
-    inherit testScript sharedDirs memorySize cpus;
-    image = prepareRockyImage {
-      inherit diskSize extraPathsToRegister selinuxEnforcing;
-      originalImage = image;
-    };
-  };
-
-  # The image is customized offline in a throwaway VM (no libguestfs), so this is
-  # the same on x86_64 and aarch64. RHEL clones disable the 9p filesystem in their
-  # kernels, so there is no mounted nix store: the backdoor script is a standalone
-  # /bin/bash script copied into /usr/bin.
-  prepareRockyImage = { originalImage, diskSize, extraPathsToRegister ? [ ], selinuxEnforcing ? true }:
+  prepareRockyImage = { hostPkgs, originalImage, diskSize, extraPathsToRegister, selinuxEnforcing ? true }:
     generic.customizeImageInVM {
       name = "${originalImage.name}-nix-vm-test.qcow2";
       inherit originalImage diskSize;
       # The root filesystem is XFS.
       rootModules = [ "xfs" ];
-      nativeBuildInputs = [ guestPkgs.policycoreutils ];
+      nativeBuildInputs = [ pkgs.policycoreutils ]; # setfiles
       script = ''
-        # Clear the root password
-        sed -i 's/^root:[^:]*:/root::/' "$mnt/etc/shadow"
+          # Copy the service files here, since otherwise they end up in the VM
+          # with their paths including the nix hash
+          # Also disable mounting store because RHEL (and RHEL clones by nature)
+          # compile their kernels with support for 9P filesystem disabled :(
+          cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; withMountedStore = false; }} "$mnt/etc/systemd/system/backdoor.service"
+          cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
+          cp ${generic.backdoorScript} backdoorScript
 
-        groupadd --root "$mnt" nixbld
+          # Patching the patched shebang to a reasonable path: /bin/bash.
+          # Mic92 approves this.
+          sed -i 's/\/nix\/store\/.*/\/bin\/bash/g' backdoorScript
+          cp backdoorScript "$mnt/usr/bin"
 
-        # Copy the service files in under fixed names, since otherwise they end
-        # up in the VM with their paths including the nix hash
-        install -m755 ${generic.backdoorScript} "$mnt/usr/bin/backdoorScript"
-        # Patch the store-path shebang to /bin/bash (there is no mounted store here).
-        sed -i 's|^#!/nix/store/.*|#!/bin/bash|' "$mnt/usr/bin/backdoorScript"
-        install -m644 ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; withMountedStore = false; }} "$mnt/etc/systemd/system/backdoor.service"
+          # Clear the root password
+          passwd --root "$mnt" -d root
 
-        # Don't spawn ttys on these devices, they are used for test instrumentation
-        # and we have no network in the test VMs, avoid an error on bootup
-        systemctl --root="$mnt" mask \
-          serial-getty@${generic.serialConsole}.service serial-getty@hvc0.service \
-          ssh.service ssh.socket
+          groupadd --root "$mnt" nixbld
 
-        # Retrieve guest interface conf via DHCP. The NIC is named differently per
-        # architecture (ens4 on x86_64, enp0s3 on aarch64), so match any ethernet.
-        mkdir -p "$mnt/etc/systemd/network"
-        cat > "$mnt/etc/systemd/network/80-nixvmtest.network" << EOF
-        [Match]
-        Name=en*
+          # Don't spawn ttys on these devices, they are used for test instrumentation
+          systemctl --root="$mnt" mask serial-getty@${generic.serialConsole}.service
+          systemctl --root="$mnt" mask serial-getty@hvc0.service
 
-        [Network]
-        DHCP=yes
-        EOF
+          # We have no network in the test VMs, avoid an error on bootup
+          systemctl --root="$mnt" mask ssh.service
+          systemctl --root="$mnt" mask ssh.socket
 
-        # (a clean PATH: the one inherited from this VM only has nix store paths)
-        chroot "$mnt" /usr/bin/env -i PATH=/usr/bin:/usr/sbin /bin/bash -c ${lib.escapeShellArg rockyFixReposScriptText}
+          # Retrieve guest interface conf via DHCP
+          # (the NIC is named ens4 on x86_64 but differently on aarch64, hence en*)
+          mkdir -p "$mnt/etc/systemd/network"
+          cat << EOF >> "$mnt/etc/systemd/network/80-ens4.network"
+          [Match]
+          Name=en*
 
-        systemctl --root="$mnt" enable backdoor.service
+          [Network]
+          DHCP=yes
+          EOF
 
-        # Keep this last: it labels the files written above, including the unit
-        # symlink `enable` just created.
-        ${if selinuxEnforcing then generic.selinuxRelabel ''"$mnt/usr/bin/backdoorScript" "$mnt/etc"'' else ''
-          sed -i 's/^SELINUX=.*/SELINUX=permissive/' "$mnt/etc/selinux/config"
-        ''}
+          systemctl --root="$mnt" enable backdoor.service
+
+          # (a clean PATH: the one inherited from this VM only has nix store paths)
+          chroot "$mnt" /usr/bin/env -i PATH=/usr/bin:/usr/sbin /bin/bash -c ${lib.escapeShellArg rockyFixReposScriptText}
+
+          ${lib.optionalString (!selinuxEnforcing) ''
+            sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' "$mnt/etc/selinux/config"
+          ''}
+          ${lib.optionalString selinuxEnforcing ''
+            # Keep this last: it labels the files written above, including the unit
+            # symlink `enable` just created.
+            ${generic.selinuxRelabel ''"$mnt/usr/bin/backdoorScript" "$mnt/etc"''}
+          ''}
       '';
     };
 in {
