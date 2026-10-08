@@ -18,11 +18,11 @@ let
   generic = hostPkgs.callPackage ./generic {
     inherit nixpkgs hostPkgs guestPkgs hostSystem guestSystem;
   };
-  ubuntu = hostPkgs.callPackage ./ubuntu { inherit generic guestPkgs guestSystem; };
-  debian = hostPkgs.callPackage ./debian { inherit generic guestPkgs guestSystem; };
-  fedora = hostPkgs.callPackage ./fedora { inherit generic guestPkgs guestSystem; };
-  rocky = hostPkgs.callPackage ./rocky { inherit generic guestPkgs guestSystem; };
-  archlinux = hostPkgs.callPackage ./archlinux { inherit generic guestPkgs guestSystem; };
+  ubuntu = hostPkgs.callPackage ./ubuntu { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  debian = hostPkgs.callPackage ./debian { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  fedora = hostPkgs.callPackage ./fedora { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  rocky = hostPkgs.callPackage ./rocky { inherit generic; pkgs = guestPkgs; system = guestSystem; };
+  archlinux = hostPkgs.callPackage ./archlinux { inherit generic; pkgs = guestPkgs; system = guestSystem; };
   # Function that can be used when defining inline modules to get better location
   # reporting in module-system errors.
   # Usage example:

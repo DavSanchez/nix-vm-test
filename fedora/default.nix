@@ -1,74 +1,89 @@
-{ generic, guestPkgs, lib, guestSystem }:
+{ generic, pkgs, lib, system }:
 let
   imagesJSON = lib.importJSON ./images.json;
   # Releases move from the live tree to the archive once they are EOL, so try both.
-  fetchImage = image: guestPkgs.fetchurl {
+  fetchImage = image: pkgs.fetchurl {
     inherit (image) hash;
     urls = [
       "https://download.fedoraproject.org/pub/fedora/linux/releases/${image.name}"
       "https://dl.fedoraproject.org/pub/archive/fedora/linux/releases/${image.name}"
     ];
   };
-  # Fedora only ships x86_64 images here, so on an aarch64 guest (e.g. darwin)
-  # `imagesJSON.${guestSystem}` is absent and this cleanly resolves to no tests.
-  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${guestSystem} or {});
+  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${system} or {});
   makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], selinuxEnforcing ? false, memorySize ? null, cpus ? null }: generic.makeVmTest {
     name = "vm-test-fedora_${imageID}";
-    inherit testScript sharedDirs memorySize cpus;
+    inherit system testScript sharedDirs memorySize cpus;
     image = prepareFedoraImage {
       inherit diskSize extraPathsToRegister selinuxEnforcing;
+      hostPkgs = pkgs;
       originalImage = image;
     };
   };
 
-  # The image is customized offline in a throwaway VM (no libguestfs), so this is
-  # the same on every architecture.
-  prepareFedoraImage = { originalImage, diskSize, extraPathsToRegister ? [ ], selinuxEnforcing ? false }:
+  resizeService = pkgs.writeText "resizeService" ''
+    [Service]
+    Type = oneshot
+    ExecStart = growpart /dev/sda 5
+    ExecStart = btrfs filesystem resize max /
+
+    [Install]
+    WantedBy = multi-user.target
+  '';
+
+  prepareFedoraImage = { hostPkgs, originalImage, diskSize, extraPathsToRegister, selinuxEnforcing ? false }:
     generic.customizeImageInVM {
       name = "${originalImage.name}-nix-vm-test.qcow2";
       inherit originalImage diskSize;
       # The root filesystem is a btrfs subvolume named `root` (next to `home` and `var`).
       mountOptions = "subvol=root";
       rootModules = [ "btrfs" "xor" "raid6_pq" "zstd_compress" ];
-      nativeBuildInputs = [ guestPkgs.policycoreutils ];
+      nativeBuildInputs = [ pkgs.policycoreutils ]; # setfiles
       script = ''
-        # Clear the root password
-        sed -i 's/^root:[^:]*:/root::/' "$mnt/etc/shadow"
+          # Copy the service files here, since otherwise they end up in the VM
+          # with their paths including the nix hash
+          cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
+          cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
+          cp ${generic.backdoorScript} backdoorScript
 
-        groupadd --root "$mnt" nixbld
+          # Patching the patched shebang to a reasonable path: /bin/bash.
+          # Mic92 approves this.
+          sed -i 's/\/nix\/store\/.*/\/bin\/bash/g' backdoorScript
+          cp backdoorScript "$mnt/usr/bin"
 
-        # Copy the service files in under fixed names, since otherwise they end
-        # up in the VM with their paths including the nix hash
-        install -m755 ${generic.backdoorScript} "$mnt/usr/bin/backdoorScript"
-        # Patch the store-path shebang to /bin/bash.
-        sed -i 's|^#!/nix/store/.*|#!/bin/bash|' "$mnt/usr/bin/backdoorScript"
-        install -m644 ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
-        install -m644 ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
+          # Clear the root password
+          passwd --root "$mnt" -d root
 
-        # Don't spawn ttys on these devices, they are used for test instrumentation
-        # and we have no network in the test VMs, avoid an error on bootup
-        systemctl --root="$mnt" mask \
-          serial-getty@${generic.serialConsole}.service serial-getty@hvc0.service \
-          ssh.service ssh.socket
+          groupadd --root "$mnt" nixbld
 
-        # Retrieve guest interface conf via DHCP. The NIC is named differently per
-        # architecture (ens4 on x86_64, enp0s3 on aarch64), so match any ethernet.
-        mkdir -p "$mnt/etc/systemd/network"
-        cat > "$mnt/etc/systemd/network/80-nixvmtest.network" << EOF
-        [Match]
-        Name=en*
+          # Don't spawn ttys on these devices, they are used for test instrumentation
+          systemctl --root="$mnt" mask serial-getty@${generic.serialConsole}.service
+          systemctl --root="$mnt" mask serial-getty@hvc0.service
 
-        [Network]
-        DHCP=yes
-        EOF
+          # We have no network in the test VMs, avoid an error on bootup
+          systemctl --root="$mnt" mask ssh.service
+          systemctl --root="$mnt" mask ssh.socket
 
-        systemctl --root="$mnt" enable backdoor.service
+          # Retrieve guest interface conf via DHCP
+          # (the NIC is named ens4 on x86_64 but differently on aarch64, hence en*)
+          mkdir -p "$mnt/etc/systemd/network"
+          cat << EOF >> "$mnt/etc/systemd/network/80-ens4.network"
+          [Match]
+          Name=en*
 
-        # Keep this last: it labels the files written above, including the unit
-        # symlink `enable` just created.
-        ${if selinuxEnforcing then generic.selinuxRelabel ''"$mnt/usr/bin/backdoorScript" "$mnt/etc"'' else ''
-          sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' "$mnt/etc/selinux/config"
-        ''}
+          [Network]
+          DHCP=yes
+          EOF
+
+          systemctl --root="$mnt" enable backdoor.service
+
+          ${lib.optionalString (!selinuxEnforcing) ''
+            sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' "$mnt/etc/selinux/config"
+          ''}
+          ${lib.optionalString selinuxEnforcing ''
+            # Keep this last: it labels the files written above, including the unit
+            # symlink `enable` just created.
+            ${generic.selinuxRelabel ''"$mnt/usr/bin/backdoorScript" "$mnt/etc"''}
+          ''}
       '';
     };
 in {

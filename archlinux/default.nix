@@ -1,77 +1,87 @@
-{ generic, guestPkgs, lib, guestSystem }:
+{ generic, pkgs, lib, system }:
 let
   imagesJSON = lib.importJSON ./images.json;
-  fetchImage = image: guestPkgs.fetchurl {
+  fetchImage = image: pkgs.fetchurl {
     inherit (image) hash;
     url = image.url;
   };
-  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${guestSystem} or {});
+  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${system} or {});
   makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], memorySize ? null, cpus ? null }: generic.makeVmTest {
     name = "vm-test-archlinux_${imageID}";
-    inherit testScript sharedDirs memorySize cpus;
+    inherit system testScript sharedDirs memorySize cpus;
     image = prepareArchlinuxImage {
       inherit diskSize extraPathsToRegister;
+      hostPkgs = pkgs;
       originalImage = image;
     };
   };
 
-  # The image is customized offline in a throwaway VM (no libguestfs), so this is
-  # the same on every architecture. Arch's basic image is GPT with BIOS boot + EFI
-  # and a btrfs root.
-  prepareArchlinuxImage = { originalImage, diskSize, extraPathsToRegister ? [ ] }:
+  # Arch basic image: GPT with BIOS boot + EFI + btrfs root on partition 3.
+  resizeService = pkgs.writeText "resizeService" ''
+    [Service]
+    Type = oneshot
+    ExecStart = /bin/sh -euc 'sfdisk --relocate=gpt-bak-std /dev/sda; echo ",+" | sfdisk --no-reread --force -N 3 /dev/sda; partx -u /dev/sda; btrfs filesystem resize max /'
+
+    [Install]
+    WantedBy = multi-user.target
+  '';
+
+  prepareArchlinuxImage = { hostPkgs, originalImage, diskSize, extraPathsToRegister }:
     generic.customizeImageInVM {
       name = "${originalImage.name}-nix-vm-test.qcow2";
       inherit originalImage diskSize;
       rootModules = [ "btrfs" "xor" "raid6_pq" "zstd_compress" ];
       script = ''
-        # Clear the root password
-        sed -i 's/^root:[^:]*:/root::/' "$mnt/etc/shadow"
+          cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
+          cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
+          cp ${generic.backdoorScript} backdoorScript
 
-        groupadd --root "$mnt" nixbld
+          # Patching the patched shebang to a reasonable path: /bin/bash.
+          sed -i 's/\/nix\/store\/.*/\/bin\/bash/g' backdoorScript
+          cp backdoorScript "$mnt/usr/bin"
 
-        # Copy the service files in under fixed names, since otherwise they end
-        # up in the VM with their paths including the nix hash
-        install -m755 ${generic.backdoorScript} "$mnt/usr/bin/backdoorScript"
-        # Patch the store-path shebang to /bin/bash.
-        sed -i 's|^#!/nix/store/.*|#!/bin/bash|' "$mnt/usr/bin/backdoorScript"
-        install -m644 ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
-        install -m644 ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
+          passwd --root "$mnt" -d root
 
-        # arch-boxes enables a pacman-init and keyring-sync pair that need the
-        # network to run first-boot key initialization
-        rm -f "$mnt/etc/systemd/system/pacman-init.service"
+          groupadd --root "$mnt" nixbld
 
-        # Don't spawn ttys on these devices, they are used for test instrumentation
-        systemctl --root="$mnt" mask serial-getty@${generic.serialConsole}.service serial-getty@hvc0.service
+          # Don't spawn ttys on these devices, they are used for test instrumentation
+          systemctl --root="$mnt" mask serial-getty@ttyS0.service
+          systemctl --root="$mnt" mask serial-getty@hvc0.service
 
-        # We have no reliable network in the test VMs
-        systemctl --root="$mnt" mask sshd.service sshd.socket
+          # We have no reliable network in the test VMs
+          systemctl --root="$mnt" mask sshd.service
+          systemctl --root="$mnt" mask sshd.socket
 
-        # arch-boxes enables systemd-time-wait-sync which blocks time-sync.target ->
-        # multi-user.target forever when NTP is unreachable
-        systemctl --root="$mnt" mask systemd-time-wait-sync.service
+          # arch-boxes enables systemd-time-wait-sync which blocks
+          # time-sync.target -> multi-user.target forever when NTP is unreachable.
+          systemctl --root="$mnt" mask systemd-time-wait-sync.service
 
-        # The pacman-init / keyring-sync units also need the network
-        systemctl --root="$mnt" mask pacman-init.service archlinux-keyring-wkd-sync.service archlinux-keyring-wkd-sync.timer
+          # arch-boxes also enables a pacman-init and keyring-sync pair that
+          # need the network to run first-boot key initialization
+          rm -f "$mnt/etc/systemd/system/pacman-init.service"
+          systemctl --root="$mnt" mask pacman-init.service
+          systemctl --root="$mnt" mask archlinux-keyring-wkd-sync.service
+          systemctl --root="$mnt" mask archlinux-keyring-wkd-sync.timer
 
-        # Skip waiting for the network to be "online"
-        systemctl --root="$mnt" mask systemd-networkd-wait-online.service
+          # Skip waiting for the network to be "online"
+          systemctl --root="$mnt" mask systemd-networkd-wait-online.service
 
-        # arch-boxes installs GRUB; systemd-boot-update is pointless
-        systemctl --root="$mnt" mask systemd-boot-update.service
+          # arch-boxes installs GRUB; systemd-boot-update is pointless
+          systemctl --root="$mnt" mask systemd-boot-update.service
 
-        # Drop GRUB's interactive timeout so the VM doesn't wait at the menu, and
-        # route the kernel console to the serial line the test driver reads.
-        if [ -f "$mnt/boot/grub/grub.cfg" ]; then
-          sed -i 's/^set timeout=.*/set timeout=0/' "$mnt/boot/grub/grub.cfg"
-          sed -i 's|\(linux\s\+/boot/vmlinuz-linux[^\n]*\)|\1 console=tty0 console=${generic.serialConsole}|' "$mnt/boot/grub/grub.cfg"
-        fi
-        if [ -f "$mnt/etc/default/grub" ]; then
-          sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/' "$mnt/etc/default/grub"
-          sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty0 console=${generic.serialConsole}"|' "$mnt/etc/default/grub"
-        fi
+          # Drop GRUB's interactive timeout so the VM doesn't wait at the menu,
+          # and route the kernel console to ttyS0 so systemd stage 2 is visible
+          # on the same serial line the test driver reads.
+          if [ -f "$mnt/boot/grub/grub.cfg" ]; then
+            sed -i 's/^set timeout=.*/set timeout=0/' "$mnt/boot/grub/grub.cfg"
+            sed -i 's|\(linux\s\+/boot/vmlinuz-linux[^\n]*\)|\1 console=tty0 console=ttyS0|' "$mnt/boot/grub/grub.cfg"
+          fi
+          if [ -f "$mnt/etc/default/grub" ]; then
+            sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/' "$mnt/etc/default/grub"
+            sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty0 console=ttyS0"|' "$mnt/etc/default/grub"
+          fi
 
-        systemctl --root="$mnt" enable backdoor.service
+          systemctl --root="$mnt" enable backdoor.service
       '';
     };
 in {
