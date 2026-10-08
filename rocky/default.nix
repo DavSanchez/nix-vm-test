@@ -78,8 +78,9 @@ let
           systemctl mask serial-getty@hvc0.service
 
           # We have no network in the test VMs, avoid an error on bootup
-          systemctl mask ssh.service
-          systemctl mask ssh.socket
+          # (the unit is called sshd on this distribution, not ssh)
+          systemctl mask sshd.service
+          systemctl mask sshd.socket
 
           # Retrieve guest interface conf via DHCP
           cat << EOF >> /etc/systemd/network/80-ens4.network
