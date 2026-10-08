@@ -86,7 +86,7 @@ let
         # and we have no network in the test VMs, avoid an error on bootup
         systemctl --root="$mnt" mask \
           serial-getty@${generic.serialConsole}.service serial-getty@hvc0.service \
-          sshd.service
+          ssh.service ssh.socket
 
         # Retrieve guest interface conf via DHCP. The NIC is named differently per
         # architecture (ens4 on x86_64, enp0s3 on aarch64), so match any ethernet.
@@ -101,11 +101,6 @@ let
 
         # (a clean PATH: the one inherited from this VM only has nix store paths)
         chroot "$mnt" /usr/bin/env -i PATH=/usr/bin:/usr/sbin /bin/bash -c ${lib.escapeShellArg rockyFixReposScriptText}
-
-        # Everything is configured offline, and without a datasource cloud-init would
-        # spend minutes probing unreachable metadata endpoints at boot.
-        mkdir -p "$mnt/etc/cloud"
-        touch "$mnt/etc/cloud/cloud-init.disabled"
 
         systemctl --root="$mnt" enable backdoor.service
 
