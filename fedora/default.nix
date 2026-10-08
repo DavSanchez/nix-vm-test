@@ -1,9 +1,13 @@
 { generic, guestPkgs, lib, guestSystem }:
 let
   imagesJSON = lib.importJSON ./images.json;
+  # Releases move from the live tree to the archive once they are EOL, so try both.
   fetchImage = image: guestPkgs.fetchurl {
     inherit (image) hash;
-    url = "https://download.fedoraproject.org/pub/fedora/linux/releases/${image.name}";
+    urls = [
+      "https://download.fedoraproject.org/pub/fedora/linux/releases/${image.name}"
+      "https://dl.fedoraproject.org/pub/archive/fedora/linux/releases/${image.name}"
+    ];
   };
   # Fedora only ships x86_64 images here, so on an aarch64 guest (e.g. darwin)
   # `imagesJSON.${guestSystem}` is absent and this cleanly resolves to no tests.
