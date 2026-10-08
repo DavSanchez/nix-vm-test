@@ -48,11 +48,6 @@ let
         DHCP=yes
         EOF
 
-        # Everything is configured offline, and without a datasource cloud-init would
-        # spend minutes probing unreachable metadata endpoints at boot.
-        mkdir -p "$mnt/etc/cloud"
-        touch "$mnt/etc/cloud/cloud-init.disabled"
-
         systemctl --root="$mnt" enable backdoor.service
       '';
     };
