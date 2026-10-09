@@ -225,6 +225,48 @@ def fedora_parse():
             }
     return json.dumps(res)
 
+ROCKY_RELEASES = "https://download.rockylinux.org/pub/rocky/"
+
+def rocky_parse():
+    """
+    Add the Rocky releases that are missing from rocky/images.json.
+
+    Like Fedora's, a release's image never changes once it is published, so the
+    existing entries are kept and only new releases are hashed. Only the current
+    minor releases are listed under pub/; the superseded ones move to vault/, which
+    is why the entries already in the file point there.
+    """
+    res = load_images("rocky/images.json")
+    print(f"[+] Parsing rocky index {ROCKY_RELEASES}")
+    versions = [
+        link.rstrip("/")
+        for link in list_links(ROCKY_RELEASES)
+        if re.fullmatch(r"[0-9]+\.[0-9]+/", link)
+    ]
+    for version in versions:
+        key = version.replace(".", "_")
+        for arch, system in [("x86_64", "x86_64-linux"), ("aarch64", "aarch64-linux")]:
+            if key in res.get(system, {}):
+                continue
+            directory = f"{ROCKY_RELEASES}{version}/images/{arch}/"
+            images = [
+                link
+                for link in list_links(directory)
+                if re.fullmatch(
+                    rf"Rocky-[0-9]+-GenericCloud-Base-{re.escape(version)}-[0-9]{{8}}\.[0-9]+\.{arch}\.qcow2",
+                    link,
+                )
+            ]
+            if not images:
+                continue
+            url = directory + max(images)
+            res.setdefault(system, {})[key] = {
+                "url": url,
+                "name": f"Rocky-{version}-GenericCloud.{arch}.qcow2",
+                "sha256": nix_hash(url),
+            }
+    return json.dumps(res)
+
 if __name__ == '__main__':
     ubuntu_json = ubuntu_parse()
     with open("ubuntu.json", "w") as f:
@@ -238,3 +280,6 @@ if __name__ == '__main__':
     fedora_json = fedora_parse()
     with open("fedora.json", "w") as f:
         f.write(fedora_json)
+    rocky_json = rocky_parse()
+    with open("rocky.json", "w") as f:
+        f.write(rocky_json)
