@@ -1,114 +1,79 @@
-{ generic, pkgs, lib, system }:
+{ generic, guestPkgs, lib, guestSystem }:
 let
   imagesJSON = lib.importJSON ./images.json;
-  fetchImage = image: pkgs.fetchurl {
+  fetchImage = image: guestPkgs.fetchurl {
     inherit (image) hash;
     url = image.url;
   };
-  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${system} or {});
-  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ] }: generic.makeVmTest {
+  images = lib.mapAttrs (k: v: fetchImage v) (imagesJSON.${guestSystem} or {});
+  makeVmTestForImage = imageID: image: { testScript, sharedDirs ? {}, diskSize ? null, extraPathsToRegister ? [ ], memorySize ? null, cpus ? null }: generic.makeVmTest {
     name = "vm-test-archlinux_${imageID}";
-    inherit system testScript sharedDirs;
+    inherit testScript sharedDirs memorySize cpus;
     image = prepareArchlinuxImage {
       inherit diskSize extraPathsToRegister;
-      hostPkgs = pkgs;
       originalImage = image;
     };
   };
 
-  # Arch basic image: GPT with BIOS boot + EFI + btrfs root on partition 3.
-  resizeService = pkgs.writeText "resizeService" ''
-    [Service]
-    Type = oneshot
-    ExecStart = /bin/sh -euc 'sfdisk --relocate=gpt-bak-std /dev/sda; echo ",+" | sfdisk --no-reread --force -N 3 /dev/sda; partx -u /dev/sda; btrfs filesystem resize max /'
+  # The image is customized offline in a throwaway VM (no libguestfs), so this is
+  # the same on every architecture. Arch's basic image is GPT with BIOS boot + EFI
+  # and a btrfs root.
+  prepareArchlinuxImage = { originalImage, diskSize, extraPathsToRegister ? [ ] }:
+    generic.customizeImageInVM {
+      name = "${originalImage.name}-nix-vm-test.qcow2";
+      inherit originalImage diskSize;
+      rootModules = [ "btrfs" "xor" "raid6_pq" "zstd_compress" ];
+      script = ''
+        # Clear the root password
+        sed -i 's/^root:[^:]*:/root::/' "$mnt/etc/shadow"
 
-    [Install]
-    WantedBy = multi-user.target
-  '';
+        groupadd --root "$mnt" nixbld
 
-  prepareArchlinuxImage = { hostPkgs, originalImage, diskSize, extraPathsToRegister }:
-    let
-      pkgs = hostPkgs;
-      resultImg = "./image.qcow2";
-    in
-    pkgs.runCommand "${originalImage.name}-nix-vm-test.qcow2" { } ''
-      install -m777 ${originalImage} ${resultImg}
+        # Copy the service files in under fixed names, since otherwise they end
+        # up in the VM with their paths including the nix hash
+        install -m755 ${generic.backdoorScript} "$mnt/usr/bin/backdoorScript"
+        # Patch the store-path shebang to /bin/bash.
+        sed -i 's|^#!/nix/store/.*|#!/bin/bash|' "$mnt/usr/bin/backdoorScript"
+        install -m644 ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
+        install -m644 ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
 
-      cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} backdoor.service
-      cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} mount-store.service
-      cp ${resizeService} resizeguest.service
-      cp ${generic.backdoorScript} backdoorScript
+        # arch-boxes enables a pacman-init and keyring-sync pair that need the
+        # network to run first-boot key initialization
+        rm -f "$mnt/etc/systemd/system/pacman-init.service"
 
-      # Patching the patched shebang to a reasonable path: /bin/bash.
-      sed -i 's/\/nix\/store\/.*/\/bin\/bash/g' backdoorScript
+        # Don't spawn ttys on these devices, they are used for test instrumentation
+        systemctl --root="$mnt" mask serial-getty@${generic.serialConsole}.service serial-getty@hvc0.service
 
-      ${lib.optionalString (diskSize != null) ''
-        export PATH="${pkgs.qemu}/bin:$PATH"
-        qemu-img resize ${resultImg} ${diskSize}
-      ''}
+        # We have no reliable network in the test VMs
+        systemctl --root="$mnt" mask sshd.service sshd.socket
 
-      ${lib.concatStringsSep "  \\\n" [
-        "${pkgs.guestfs-tools}/bin/virt-customize"
-        "-a ${resultImg}"
-        "--smp 2"
-        "--memsize 256"
-        "--no-network"
-        "--copy-in backdoorScript:/usr/bin"
-        "--copy-in backdoor.service:/etc/systemd/system"
-        "--copy-in mount-store.service:/etc/systemd/system"
-        "--copy-in resizeguest.service:/etc/systemd/system"
-        "--run"
-        (pkgs.writeShellScript "run-script" ''
-          passwd -d root
+        # arch-boxes enables systemd-time-wait-sync which blocks time-sync.target ->
+        # multi-user.target forever when NTP is unreachable
+        systemctl --root="$mnt" mask systemd-time-wait-sync.service
 
-          groupadd nixbld
+        # The pacman-init / keyring-sync units also need the network
+        systemctl --root="$mnt" mask pacman-init.service archlinux-keyring-wkd-sync.service archlinux-keyring-wkd-sync.timer
 
-          # Don't spawn ttys on these devices, they are used for test instrumentation
-          systemctl mask serial-getty@ttyS0.service
-          systemctl mask serial-getty@hvc0.service
+        # Skip waiting for the network to be "online"
+        systemctl --root="$mnt" mask systemd-networkd-wait-online.service
 
-          # We have no reliable network in the test VMs
-          systemctl mask sshd.service
-          systemctl mask sshd.socket
+        # arch-boxes installs GRUB; systemd-boot-update is pointless
+        systemctl --root="$mnt" mask systemd-boot-update.service
 
-          # arch-boxes enables systemd-time-wait-sync which blocks
-          # time-sync.target -> multi-user.target forever when NTP is unreachable.
-          systemctl mask systemd-time-wait-sync.service
+        # Drop GRUB's interactive timeout so the VM doesn't wait at the menu, and
+        # route the kernel console to the serial line the test driver reads.
+        if [ -f "$mnt/boot/grub/grub.cfg" ]; then
+          sed -i 's/^set timeout=.*/set timeout=0/' "$mnt/boot/grub/grub.cfg"
+          sed -i 's|\(linux\s\+/boot/vmlinuz-linux[^\n]*\)|\1 console=tty0 console=${generic.serialConsole}|' "$mnt/boot/grub/grub.cfg"
+        fi
+        if [ -f "$mnt/etc/default/grub" ]; then
+          sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/' "$mnt/etc/default/grub"
+          sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty0 console=${generic.serialConsole}"|' "$mnt/etc/default/grub"
+        fi
 
-          # arch-boxes also enables a pacman-init and keyring-sync pair that
-          # need the network to run first-boot key initialization
-          rm -f /etc/systemd/system/pacman-init.service
-          systemctl mask pacman-init.service
-          systemctl mask archlinux-keyring-wkd-sync.service
-          systemctl mask archlinux-keyring-wkd-sync.timer
-
-          # Skip waiting for the network to be "online"
-          systemctl mask systemd-networkd-wait-online.service
-
-          # arch-boxes installs GRUB; systemd-boot-update is pointless
-          systemctl mask systemd-boot-update.service
-
-          # Drop GRUB's interactive timeout so the VM doesn't wait at the menu,
-          # and route the kernel console to ttyS0 so systemd stage 2 is visible
-          # on the same serial line the test driver reads.
-          if [ -f /boot/grub/grub.cfg ]; then
-            sed -i 's/^set timeout=.*/set timeout=0/' /boot/grub/grub.cfg
-            sed -i 's|\(linux\s\+/boot/vmlinuz-linux[^\n]*\)|\1 console=tty0 console=ttyS0|' /boot/grub/grub.cfg
-          fi
-          if [ -f /etc/default/grub ]; then
-            sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/' /etc/default/grub
-            sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty0 console=ttyS0"|' /etc/default/grub
-          fi
-
-          ${lib.optionalString (diskSize != null) ''
-            systemctl enable resizeguest.service
-          ''}
-          systemctl enable backdoor.service
-        '')
-      ]};
-
-      cp ${resultImg} $out
-    '';
+        systemctl --root="$mnt" enable backdoor.service
+      '';
+    };
 in {
   inherit images prepareArchlinuxImage;
 } // lib.mapAttrs makeVmTestForImage images
