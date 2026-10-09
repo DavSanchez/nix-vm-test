@@ -34,7 +34,7 @@ let
       script = ''
           cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
-        cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
+          cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
           cp ${generic.backdoorScript} backdoorScript
 
           # Patching the patched shebang to a reasonable path: /bin/bash.
@@ -83,9 +83,9 @@ let
           fi
 
           ${lib.optionalString (diskSize != null) ''
-          systemctl --root="$mnt" enable resizeguest.service
-        ''}
-        systemctl --root="$mnt" enable backdoor.service
+            systemctl --root="$mnt" enable resizeguest.service
+          ''}
+          systemctl --root="$mnt" enable backdoor.service
       '';
     };
 in {
