@@ -258,8 +258,11 @@ rec {
 
         # On darwin we accelerate with Apple's Hypervisor.framework (HVF); on Linux
         # with KVM. We only ever pair a host with a same-architecture Linux guest
-        # (e.g. aarch64-darwin → aarch64-linux), so hardware acceleration always applies.
-        accel = if hostIsDarwin then "hvf" else "kvm";
+        # (e.g. aarch64-darwin → aarch64-linux), so hardware acceleration applies
+        # whenever the host has it. On a Linux host without /dev/kvm (e.g. GitHub's
+        # hosted arm64 runners) QEMU falls back to TCG emulation: slow, but it runs,
+        # as nixpkgs' own `accel=kvm:tcg` does.
+        accel = if hostIsDarwin then "hvf" else "kvm:tcg";
 
         qemuBinary = "${lib.getBin qemupkg}/bin/qemu-system-${qemuArch}";
 
