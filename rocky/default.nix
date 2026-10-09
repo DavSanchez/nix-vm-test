@@ -107,11 +107,10 @@ let
           systemctl --root="$mnt" mask ssh.socket
 
           # Retrieve guest interface conf via DHCP
-          # (the NIC is named ens4 on x86_64 but differently on aarch64, hence en*)
           mkdir -p "$mnt/etc/systemd/network"
-          cat << EOF >> "$mnt/etc/systemd/network/80-ens4.network"
+          cat << EOF >> "$mnt/etc/systemd/network/80-${generic.nicName}.network"
           [Match]
-          Name=en*
+          Name=${generic.nicName}
 
           [Network]
           DHCP=yes

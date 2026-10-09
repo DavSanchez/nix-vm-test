@@ -56,15 +56,12 @@ let
           systemctl --root="$mnt" mask ssh.socket
 
 
-          # (the NIC is named ens4 on x86_64 but differently on aarch64, hence en*)
           cat << EOF >> "$mnt/etc/netplan/99_config.yaml"
           network:
             version: 2
             renderer: networkd
             ethernets:
-              ens4:
-                match:
-                  name: "en*"
+              ${generic.nicName}:
                 dhcp4: true
           EOF
 

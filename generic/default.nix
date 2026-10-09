@@ -101,6 +101,10 @@ rec {
     # virtio (vda) on aarch64, see the disk flags of the runner below.
     diskDevice = if guestIsAarch64 then "/dev/vda" else "/dev/sda";
 
+    # The name the guest gives its NIC, which comes from its PCI slot: ens4 on
+    # x86_64, enp0s3 on aarch64 (the same on every distribution we ship).
+    nicName = if guestIsAarch64 then "enp0s3" else "ens4";
+
     resizeService = guestPkgs.writeText "resizeService" ''
       [Service]
       Type = oneshot
