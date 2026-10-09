@@ -20,7 +20,7 @@ let
   resizeService = pkgs.writeText "resizeService" ''
     [Service]
     Type = oneshot
-    ExecStart = /bin/sh -euc 'sfdisk --relocate=gpt-bak-std ${generic.diskDevice}; echo ",+" | sfdisk --no-reread --force -N 3 ${generic.diskDevice}; partx -u ${generic.diskDevice}; btrfs filesystem resize max /'
+    ExecStart = /bin/sh -euc 'sfdisk --relocate=gpt-bak-std /dev/sda; echo ",+" | sfdisk --no-reread --force -N 3 /dev/sda; partx -u /dev/sda; btrfs filesystem resize max /'
 
     [Install]
     WantedBy = multi-user.target
@@ -34,7 +34,6 @@ let
       script = ''
           cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
-        cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
           cp ${generic.backdoorScript} backdoorScript
 
           # Patching the patched shebang to a reasonable path: /bin/bash.
@@ -82,10 +81,7 @@ let
             sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty0 console=ttyS0"|' "$mnt/etc/default/grub"
           fi
 
-          ${lib.optionalString (diskSize != null) ''
-          systemctl --root="$mnt" enable resizeguest.service
-        ''}
-        systemctl --root="$mnt" enable backdoor.service
+          systemctl --root="$mnt" enable backdoor.service
       '';
     };
 in {

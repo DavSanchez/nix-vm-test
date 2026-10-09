@@ -97,21 +97,6 @@ rec {
       WantedBy = multi-user.target
     '';
 
-    # The block device of the image inside the guest: IDE/SATA (sda) on x86_64,
-    # virtio (vda) on aarch64, see the disk flags of the runner below.
-    diskDevice = if guestIsAarch64 then "/dev/vda" else "/dev/sda";
-
-    resizeService = guestPkgs.writeText "resizeService" ''
-      [Service]
-      Type = oneshot
-      ExecStart = apt-get install -yq cloud-guest-utils
-      ExecStart = growpart ${diskDevice} 1
-      ExecStart = resize2fs ${diskDevice}1
-
-      [Install]
-      WantedBy = multi-user.target
-    '';
-
   # Customize a disk image without libguestfs: boot a tiny Linux VM (nixpkgs'
   # `vmTools.runInLinuxVM`) with the image attached as a raw virtio disk, mount its
   # root filesystem and run `script` against it. Unlike `virt-customize` (whose
@@ -124,10 +109,8 @@ rec {
   # `rootPartition` : partition number of the root filesystem. By default it is the
   #                   largest partition, which is the root in every cloud image we
   #                   use (its number differs between distros and architectures).
-  # `diskSize`      : if set, enlarge the image to this size (e.g. "10G" or "+2G"), as
-  #                   `qemu-img resize` does. The partition and filesystem are grown
-  #                   by the guest on boot, through the distribution's
-  #                   `resizeguest.service`.
+  # `diskSize`      : if set, grow the image to this size (e.g. "10G"), then the
+  #                   root partition and its (ext4) filesystem to fill it.
   # `mountOptions`  : options for mounting the root (e.g. "subvol=root" when the
   #                   root filesystem is a btrfs subvolume, as on Fedora).
   # `rootModules`   : kernel modules the VM needs to mount the root (e.g. "btrfs").
@@ -157,7 +140,11 @@ rec {
         nativeBuildInputs = [
           guestPkgs.qemu-utils
           guestPkgs.util-linux
+          guestPkgs.e2fsprogs
+          guestPkgs.xfsprogs
+          guestPkgs.btrfs-progs
           guestPkgs.shadow # `groupadd --root`
+          guestPkgs.cloud-utils # growpart
           guestPkgs.systemd # `systemctl --root` to enable/mask units offline
         ] ++ nativeBuildInputs;
         preVM = ''
@@ -182,8 +169,24 @@ rec {
           done
         ''}
         mnt=/mnt
+        ${lib.optionalString (diskSize != null) ''
+          # growpart exits 1 with NOCHANGE when the partition is already as large as
+          # it can get (e.g. an image that is already that size), which is fine.
+          growpart /dev/vda "''${root#/dev/vda}" || [ $? -eq 1 ]
+          # ext4 grows offline; xfs and btrfs only grow while mounted (below).
+          if [ "$(blkid -o value -s TYPE "$root")" = ext4 ]; then
+            e2fsck -fy "$root" || [ $? -le 1 ]
+            resize2fs "$root"
+          fi
+        ''}
         mkdir -p "$mnt"
         mount ${lib.optionalString (mountOptions != null) "-o ${mountOptions}"} "$root" "$mnt"
+        ${lib.optionalString (diskSize != null) ''
+          case "$(blkid -o value -s TYPE "$root")" in
+            xfs) xfs_growfs "$mnt" ;;
+            btrfs) btrfs filesystem resize max "$mnt" ;;
+          esac
+        ''}
         ${script}
         umount "$mnt"
       '');

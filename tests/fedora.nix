@@ -14,10 +14,8 @@ let
 in {
   resizeImage = (lib.fedora."43" {
     sharedDirs = {};
-    testScript = ''
-      vm.wait_for_unit("multi-user.target")
-    '';
-    diskSize = "+2M";
+    testScript = import ./resize-check.nix { minDiskMiB = 5632; };
+    diskSize = "+1G";
   }).sandboxed;
 
   # The image must boot, and the backdoor must work, with SELinux enforcing.

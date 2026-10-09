@@ -37,7 +37,7 @@ let
   resizeService = pkgs.writeText "resizeService" ''
     [Service]
     Type = oneshot
-    ExecStart = growpart ${generic.diskDevice} 1
+    ExecStart = growpart /dev/sda 1
     ExecStart = xfs_growfs /
 
     [Install]
@@ -85,7 +85,6 @@ let
           # compile their kernels with support for 9P filesystem disabled :(
           cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; withMountedStore = false; }} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
-          cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
           cp ${generic.backdoorScript} backdoorScript
 
           # Patching the patched shebang to a reasonable path: /bin/bash.
@@ -117,9 +116,6 @@ let
           DHCP=yes
           EOF
 
-          ${lib.optionalString (diskSize != null) ''
-            systemctl --root="$mnt" enable resizeguest.service
-          ''}
           systemctl --root="$mnt" enable backdoor.service
 
           # (a clean PATH: the one inherited from this VM only has nix store paths)

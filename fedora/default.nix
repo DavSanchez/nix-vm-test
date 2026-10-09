@@ -23,7 +23,7 @@ let
   resizeService = pkgs.writeText "resizeService" ''
     [Service]
     Type = oneshot
-    ExecStart = growpart ${generic.diskDevice} 5
+    ExecStart = growpart /dev/sda 5
     ExecStart = btrfs filesystem resize max /
 
     [Install]
@@ -43,7 +43,6 @@ let
           # with their paths including the nix hash
           cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
-          cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
           cp ${generic.backdoorScript} backdoorScript
 
           # Patching the patched shebang to a reasonable path: /bin/bash.
@@ -75,9 +74,6 @@ let
           DHCP=yes
           EOF
 
-          ${lib.optionalString (diskSize != null) ''
-            systemctl --root="$mnt" enable resizeguest.service
-          ''}
           systemctl --root="$mnt" enable backdoor.service
 
           ${lib.optionalString (!selinuxEnforcing) ''

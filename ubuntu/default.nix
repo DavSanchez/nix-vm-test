@@ -25,7 +25,6 @@ let
           # with their paths including the nix hash
           cp ${generic.backdoor {}} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
-          cp ${generic.resizeService} "$mnt/etc/systemd/system/resizeguest.service"
 
           # Clear the root password
           passwd --root "$mnt" -d root
@@ -68,9 +67,6 @@ let
                 dhcp4: true
           EOF
 
-          ${lib.optionalString (diskSize != null) ''
-            systemctl --root="$mnt" enable resizeguest.service
-          ''}
           systemctl --root="$mnt" enable backdoor.service
       '';
     };

@@ -15,10 +15,8 @@ let
 in {
   resizeImage = (lib.ubuntu."23_04" {
     sharedDirs = {};
-    testScript = ''
-      vm.wait_for_unit("multi-user.target")
-    '';
-    diskSize = "+2M";
+    testScript = import ./resize-check.nix { minDiskMiB = 2765; };
+    diskSize = "+1G";
   }).sandboxed;
 
   sharedDirTest = let
