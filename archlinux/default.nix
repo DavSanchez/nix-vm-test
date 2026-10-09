@@ -35,11 +35,10 @@ let
           cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
           cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
-          cp ${generic.backdoorScript} backdoorScript
+          cp ${generic.backdoorScript} "$mnt/usr/bin/backdoorScript"
 
           # Patching the patched shebang to a reasonable path: /bin/bash.
-          sed -i 's/\/nix\/store\/.*/\/bin\/bash/g' backdoorScript
-          cp backdoorScript "$mnt/usr/bin"
+          sed -i 's/\/nix\/store\/.*/\/bin\/bash/g' "$mnt/usr/bin/backdoorScript"
 
           passwd --root "$mnt" -d root
 
