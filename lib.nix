@@ -16,7 +16,7 @@ let
     else import nixpkgs { system = guestSystem; };
 
   generic = hostPkgs.callPackage ./generic {
-    inherit nixpkgs hostPkgs guestPkgs hostSystem guestSystem;
+    inherit nixpkgs hostPkgs guestPkgs;
   };
   ubuntu = hostPkgs.callPackage ./ubuntu { inherit generic; pkgs = guestPkgs; system = guestSystem; };
   debian = hostPkgs.callPackage ./debian { inherit generic; pkgs = guestPkgs; system = guestSystem; };

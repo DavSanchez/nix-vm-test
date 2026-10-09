@@ -15,7 +15,7 @@ let
   generic = import ./generic {
     inherit (prev) lib;
     hostPkgs = final;
-    inherit guestPkgs hostSystem guestSystem;
+    inherit guestPkgs;
     nixpkgs = prev.path;
   };
   ubuntu = prev.callPackage ./ubuntu { inherit generic; pkgs = guestPkgs; system = guestSystem; };

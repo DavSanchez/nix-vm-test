@@ -1,4 +1,4 @@
-{ lib, hostPkgs, guestPkgs, nixpkgs, ... }:
+{ lib, hostPkgs, guestPkgs, nixpkgs }:
 rec {
   # `hostPkgs`  : packages that run on the machine driving the test (QEMU, the
   #               Python test-driver, the run-vm wrapper script). On a Linux host
