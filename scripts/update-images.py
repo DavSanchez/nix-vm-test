@@ -171,6 +171,60 @@ def archlinux_parse():
         }
     })
 
+def list_links(url):
+    """The links of an HTML directory index, or [] if there is no such page."""
+    page = requests.get(url)
+    if page.status_code != 200:
+        return []
+    soup = BeautifulSoup(page.content, "html.parser")
+    return [link["href"] for link in soup.find_all("a") if link.get("href")]
+
+def load_images(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+FEDORA_RELEASES = "https://dl.fedoraproject.org/pub/fedora/linux/releases/"
+
+def fedora_parse():
+    """
+    Add the Fedora releases that are missing from fedora/images.json.
+
+    A release's image never changes once it is published, and the releases that
+    reached their end of life are moved to the archive, so (unlike the other
+    distributions) the existing entries are kept and only new ones are hashed.
+    """
+    res = load_images("fedora/images.json")
+    tracked = [int(v) for images in res.values() for v in images]
+    oldest = min(tracked) if tracked else 43
+    print(f"[+] Parsing fedora index {FEDORA_RELEASES}")
+    releases = sorted(
+        int(link.rstrip("/"))
+        for link in list_links(FEDORA_RELEASES)
+        if re.fullmatch("[0-9]+/", link) and int(link.rstrip("/")) >= oldest
+    )
+    for release in releases:
+        for arch, system in [("x86_64", "x86_64-linux"), ("aarch64", "aarch64-linux")]:
+            if str(release) in res.get(system, {}):
+                continue
+            directory = f"{release}/Cloud/{arch}/images/"
+            # Skip the UEFI-UKI variant, which is a different image
+            images = [
+                link
+                for link in list_links(FEDORA_RELEASES + directory)
+                if re.fullmatch(rf"Fedora-Cloud-Base-Generic-{release}-[0-9.]+\.{arch}\.qcow2", link)
+            ]
+            if not images:
+                continue
+            name = directory + max(images)
+            res.setdefault(system, {})[str(release)] = {
+                "name": name,
+                "hash": nix_hash_sri(FEDORA_RELEASES + name),
+            }
+    return json.dumps(res)
+
 if __name__ == '__main__':
     ubuntu_json = ubuntu_parse()
     with open("ubuntu.json", "w") as f:
@@ -181,3 +235,6 @@ if __name__ == '__main__':
     archlinux_json = archlinux_parse()
     with open("archlinux.json", "w") as f:
         f.write(archlinux_json)
+    fedora_json = fedora_parse()
+    with open("fedora.json", "w") as f:
+        f.write(fedora_json)
