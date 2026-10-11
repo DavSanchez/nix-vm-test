@@ -331,8 +331,10 @@ rec {
 
           cd "$TMPDIR"
           ${lib.optionalString guestIsAarch64 ''
-            # Writable UEFI variable store for the aarch64 firmware above. A blank
-            # 64 MiB NVRAM matches the code image size; -snapshot keeps it ephemeral.
+            # Writable UEFI variable store for the aarch64 firmware above: a blank
+            # file of the same size as the firmware code image (64 MiB), which the
+            # firmware initializes on first use. It is created anew on every start
+            # (in a fresh $TMPDIR), so nothing persists from one run to the next.
             truncate -s 64M "$TMPDIR/efivars.fd"
           ''}
 
