@@ -14,10 +14,8 @@ let
 in {
   resizeImage = (lib.debian."13" {
     sharedDirs = {};
-    testScript = ''
-      vm.wait_for_unit("multi-user.target")
-    '';
-    diskSize = "+2M";
+    testScript = import ./resize-check.nix { minDiskMiB = 3584; };
+    diskSize = "+1G";
   }).sandboxed;
 
   sharedDirTest = let
