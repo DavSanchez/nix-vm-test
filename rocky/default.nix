@@ -34,16 +34,6 @@ let
     };
   };
 
-  resizeService = pkgs.writeText "resizeService" ''
-    [Service]
-    Type = oneshot
-    ExecStart = growpart ${generic.diskDevice} 1
-    ExecStart = xfs_growfs /
-
-    [Install]
-    WantedBy = multi-user.target
-  '';
-
   # Kept as plain text (rather than inline in the script below) because it runs
   # inside a chroot of the image, where no nix store paths are visible.
   rockyFixReposScriptText = ''
@@ -85,7 +75,6 @@ let
           # compile their kernels with support for 9P filesystem disabled :(
           cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; withMountedStore = false; }} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
-          cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
           cp ${generic.backdoorScript} "$mnt/usr/bin/backdoorScript"
 
           # Patching the patched shebang to a reasonable path: /bin/bash.
@@ -115,9 +104,6 @@ let
           DHCP=yes
           EOF
 
-          ${lib.optionalString (diskSize != null) ''
-            systemctl --root="$mnt" enable resizeguest.service
-          ''}
           systemctl --root="$mnt" enable backdoor.service
 
           # (a clean PATH: the one inherited from this VM only has nix store paths)

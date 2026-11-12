@@ -16,16 +16,6 @@ let
     };
   };
 
-  # Arch basic image: GPT with BIOS boot + EFI + btrfs root on partition 3.
-  resizeService = pkgs.writeText "resizeService" ''
-    [Service]
-    Type = oneshot
-    ExecStart = /bin/sh -euc 'sfdisk --relocate=gpt-bak-std ${generic.diskDevice}; echo ",+" | sfdisk --no-reread --force -N 3 ${generic.diskDevice}; partx -u ${generic.diskDevice}; btrfs filesystem resize max /'
-
-    [Install]
-    WantedBy = multi-user.target
-  '';
-
   prepareArchlinuxImage = { hostPkgs, originalImage, diskSize, extraPathsToRegister }:
     generic.customizeImageInVM {
       name = "${originalImage.name}-nix-vm-test.qcow2";
@@ -34,7 +24,6 @@ let
       script = ''
           cp ${generic.backdoor { scriptPath = "/usr/bin/backdoorScript"; }} "$mnt/etc/systemd/system/backdoor.service"
           cp ${generic.mountStore { pathsToRegister = extraPathsToRegister; }} "$mnt/etc/systemd/system/mount-store.service"
-          cp ${resizeService} "$mnt/etc/systemd/system/resizeguest.service"
           cp ${generic.backdoorScript} "$mnt/usr/bin/backdoorScript"
 
           # Patching the patched shebang to a reasonable path: /bin/bash.
@@ -81,9 +70,6 @@ let
             sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 console=tty0 console=ttyS0"|' "$mnt/etc/default/grub"
           fi
 
-          ${lib.optionalString (diskSize != null) ''
-            systemctl --root="$mnt" enable resizeguest.service
-          ''}
           systemctl --root="$mnt" enable backdoor.service
       '';
     };
